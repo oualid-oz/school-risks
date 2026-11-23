@@ -130,3 +130,21 @@ def test_actions_and_snapshots_work_on_postgres(pg_client):
 def test_readiness_checks_the_schema_on_postgres(pg_client):
     body = pg_client.get("/health/ready").json()
     assert body["checks"] == {"database": "ok", "schema": "ok", "reference_data": "ok"}
+
+
+def test_deploy_check_migrates_and_loads_an_empty_database(pg_engine, monkeypatch, capsys):
+    import app.manage as manage
+
+    command.downgrade(alembic_config(URL), "base")  # a brand-new database, e.g. a Neon preview branch
+    monkeypatch.setattr(settings, "database_url", URL)
+    monkeypatch.setattr(app_db, "engine", pg_engine)
+    monkeypatch.setattr(manage, "engine", pg_engine)
+
+    monkeypatch.setenv("SRT_MIGRATE_ON_BUILD", "0")  # read-only build: refuses, writes nothing
+    assert manage.main(["deploy-check"]) == 1
+
+    monkeypatch.delenv("SRT_MIGRATE_ON_BUILD")
+    assert manage.main(["deploy-check"]) == 0
+    assert "loaded 70 schools" in capsys.readouterr().out
+    assert manage.main(["deploy-check"]) == 0  # second build: data already there
+    assert migration_status(pg_engine)[0] == migration_status(pg_engine)[1]
