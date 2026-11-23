@@ -25,6 +25,7 @@ COPY_ORDER = ["app_user", "user_college", "action", "audit_log", "score_snapshot
 def _require_postgres() -> None:
     if not is_postgres():
         sys.exit("SRT_DATABASE_URL (or DATABASE_URL) must point to Postgres for this command.")
+        sys.exit("SRT_DATABASE_URL (or DATABASE_URL) must point to Postgres for this command.")
 
 
 def cmd_check(_: argparse.Namespace) -> int:
@@ -105,6 +106,8 @@ def cmd_deploy_check(_: argparse.Namespace) -> int:
     from app.models.reference import college
 
     _require_postgres()
+    # Messages go to stdout and stderr: flush each line so build logs keep their order.
+    sys.stdout.reconfigure(line_buffering=True)
     if os.environ.get("SRT_MIGRATE_ON_BUILD", "1").lower() in {"0", "false", "no"}:
         print("SRT_MIGRATE_ON_BUILD is off: migrations skipped.")
     else:
