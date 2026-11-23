@@ -25,6 +25,7 @@ COPY_ORDER = ["app_user", "user_college", "action", "audit_log", "score_snapshot
 def _require_postgres() -> None:
     if not is_postgres():
         sys.exit("SRT_DATABASE_URL (or DATABASE_URL) must point to Postgres for this command.")
+        sys.exit("SRT_DATABASE_URL (or DATABASE_URL) must point to Postgres for this command.")
 
 
 def cmd_check(_: argparse.Namespace) -> int:
