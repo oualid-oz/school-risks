@@ -67,7 +67,7 @@ def get_current_user(
 ) -> User:
     unauthorized = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Could not validate credentials",
+        detail="Session invalide ou expirée",
         headers={"WWW-Authenticate": "Bearer"},
     )
     try:
@@ -94,7 +94,7 @@ def get_current_user(
 def require_roles(*roles: UserRole):
     def check_role(user: User = Depends(get_current_user)) -> User:
         if user.role not in roles:
-            raise HTTPException(status_code=403, detail="Insufficient permissions")
+            raise HTTPException(status_code=403, detail="Droits insuffisants pour cette action")
         return user
 
     return check_role
@@ -116,7 +116,7 @@ def can_manage_school(session: Session, user: User, uai: str) -> bool:
 
 def require_school_access(session: Session, user: User, uai: str) -> None:
     if not can_manage_school(session, user, uai):
-        raise HTTPException(status_code=403, detail="No access to actions for this school")
+        raise HTTPException(status_code=403, detail="Pas d’accès aux actions de ce collège")
 
 
 def record_audit(

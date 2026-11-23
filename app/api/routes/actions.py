@@ -39,7 +39,7 @@ def _to_read(a: Action) -> ActionRead:
 def _get_or_404(session: Session, action_id: int) -> Action:
     action = session.get(Action, action_id)
     if action is None:
-        raise HTTPException(404, f"Action {action_id} not found")
+        raise HTTPException(404, f"Action {action_id} introuvable")
     return action
 
 
@@ -73,7 +73,7 @@ def find_actions(
     if user.role == UserRole.referent:
         school_uais = assigned_schools(session, user)
         if uai and uai not in school_uais:
-            raise HTTPException(status_code=403, detail="No access to actions for this school")
+            raise HTTPException(status_code=403, detail="Pas d’accès aux actions de ce collège")
         if not school_uais:
             return []
         stmt = stmt.where(Action.uai.in_(school_uais))
@@ -102,7 +102,7 @@ def create_action(
 ):
     require_school_access(session, user, payload.uai)
     if not store.exists(payload.uai):
-        raise HTTPException(422, f"Unknown college UAI {payload.uai}")
+        raise HTTPException(422, f"UAI de collège inconnu : {payload.uai}")
     action = Action.model_validate(payload)
     session.add(action)
     session.flush()

@@ -128,13 +128,13 @@ def render(user: User, digest: Digest, scope: str, today: date) -> Email:
     footer = (
         f"Tableau de bord : {link}/\n"
         "Vous recevez ce message car les alertes e-mail sont activées sur votre compte "
-        "(bouton « Alertes e-mail » en haut de l’application pour les désactiver)."
+        "(bouton « Mon compte » en haut de l’application pour les désactiver)."
     )
     text_parts.append(footer)
     html_parts.append(
         f'<p><a href="{html.escape(link)}/">Tableau de bord</a></p>'
         "<p style=\"color:#777;font-size:12px\">Vous recevez ce message car les alertes e-mail "
-        "sont activées sur votre compte (bouton « Alertes e-mail » en haut de l’application "
+        "sont activées sur votre compte (bouton « Mon compte » en haut de l’application "
         "pour les désactiver).</p>"
     )
     return Email(to=user.email, subject=subject, text="\n".join(text_parts), html="".join(html_parts))

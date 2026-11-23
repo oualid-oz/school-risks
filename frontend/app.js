@@ -130,10 +130,15 @@ function showError(id, message) {
   banner.hidden = false;
 }
 
+const VIEWS = ["login-screen", "dashboard", "school-page", "admin-page"];
+
+function showView(id) {
+  VIEWS.forEach((view) => { document.getElementById(view).hidden = view !== id; });
+}
+
 function showLogin(message = "") {
-  document.getElementById("login-screen").hidden = false;
-  document.getElementById("dashboard").hidden = true;
-  document.getElementById("school-page").hidden = true;
+  showView("login-screen");
+  document.querySelectorAll("dialog[open]").forEach((dialog) => dialog.close());
   document.getElementById("account-controls").hidden = true;
   const error = document.getElementById("login-error");
   error.textContent = message;
@@ -142,8 +147,7 @@ function showLogin(message = "") {
 
 function showAccount(user) {
   currentUser = user;
-  // Digests are for admins and referents (the API refuses them for readers).
-  document.getElementById("alerts-button").hidden = !["admin", "referent"].includes(user.role);
+  document.getElementById("admin-link").hidden = user.role !== "admin";
   document.getElementById("login-screen").hidden = true;
   document.getElementById("account-controls").hidden = false;
   document.getElementById("account-name").textContent = `${user.username} · ${user.role}`;
@@ -433,22 +437,6 @@ function renderHistoryChart(canvas, history) {
   });
 }
 
-function actionCard(action) {
-  const card = element("article", "action-card");
-  card.append(element("h3", "", action.titre));
-  if (action.description) card.append(element("p", "", action.description));
-  const tags = element("div", "action-tags");
-  tags.append(
-    element("span", "", HAZARD_LABELS[action.alea] || action.alea),
-    element("span", "", STATUS_LABELS[action.statut] || action.statut),
-    element("span", "", PRIORITY_LABELS[action.priorite] || action.priorite)
-  );
-  if (action.echeance) tags.append(element("span", action.en_retard ? "late" : "", `${action.en_retard ? "En retard · " : "Échéance · "}${action.echeance}`));
-  if (action.responsable) tags.append(element("span", "", action.responsable));
-  card.append(tags);
-  return card;
-}
-
 function renderSchool(school, actions, history, ppms) {
   const root = document.getElementById("school-content");
   const profile = school.profil_risque;
@@ -503,12 +491,7 @@ function renderSchool(school, actions, history, ppms) {
   historyWrap.append(historyCanvas);
   historyPanel.append(historyWrap);
 
-  const actionsPanel = element("section", "panel detail-panel actions-panel");
-  actionsPanel.append(element("h2", "", "Actions de suivi"), element("p", "panel-caption", `${actions.length} action${actions.length > 1 ? "s" : ""} enregistrée${actions.length > 1 ? "s" : ""}.`));
-  const actionList = element("div", actions.length ? "actions-list" : "empty-state");
-  if (actions.length) actions.forEach((action) => actionList.append(actionCard(action)));
-  else actionList.textContent = "Aucune action de suivi pour cet établissement.";
-  actionsPanel.append(actionList);
+  const actionsPanel = renderActionsPanel(school.uai, actions); // actions.js
 
   root.replaceChildren(header);
   const grid = element("div", "detail-grid");
@@ -711,53 +694,21 @@ function ppmsPanel(uai, ppms) {
   return panel;
 }
 
-// ---- Email alerts (own account) -------------------------------------------------------
-function setupAlertsDialog() {
-  const dialog = document.getElementById("alerts-dialog");
-  const email = document.getElementById("alerts-email");
-  const enabled = document.getElementById("alerts-enabled");
-  const error = document.getElementById("alerts-error");
-  const save = document.getElementById("alerts-save");
-  document.getElementById("alerts-button").addEventListener("click", () => {
-    email.value = currentUser?.email || "";
-    enabled.checked = Boolean(currentUser?.alertes_email);
-    error.hidden = true;
-    dialog.showModal();
-  });
-  document.getElementById("alerts-cancel").addEventListener("click", () => dialog.close());
-  document.getElementById("alerts-form").addEventListener("submit", async (event) => {
-    event.preventDefault();
-    error.hidden = true;
-    save.disabled = true;
-    try {
-      currentUser = await apiRequest("/auth/me", {
-        method: "PATCH",
-        body: { email: email.value.trim() || null, alertes_email: enabled.checked },
-      });
-      dialog.close();
-    } catch (err) {
-      error.textContent = err.message;
-      error.hidden = false;
-    } finally {
-      save.disabled = false;
-    }
-  });
-}
-
 async function openSchool(uai) {
   location.hash = `school/${encodeURIComponent(uai)}`;
 }
 
 async function showSchoolPage(uai) {
-  document.getElementById("dashboard").hidden = true;
-  document.getElementById("school-page").hidden = false;
+  showView("school-page");
   document.getElementById("school-error").hidden = true;
   document.getElementById("school-content").replaceChildren(element("div", "empty-state", "Chargement de la fiche…"));
   try {
     const [school, history, actions, ppms] = await Promise.all([
       getJson(`/colleges/${encodeURIComponent(uai)}`),
       getJson(`/colleges/${encodeURIComponent(uai)}/historique`),
-      getJson(`/actions?uai=${encodeURIComponent(uai)}`),
+      // Referents only see the actions of their own schools (the API answers 403 otherwise),
+      // but every school's risk page stays readable.
+      canSeeActions(uai) ? getJson(`/actions?uai=${encodeURIComponent(uai)}`) : Promise.resolve(null),
       getJson(`/colleges/${encodeURIComponent(uai)}/ppms`),
     ]);
     renderSchool(school, actions, history, ppms);
@@ -768,15 +719,14 @@ async function showSchoolPage(uai) {
 }
 
 function route() {
+  if (!currentUser) return;
   const match = location.hash.match(/^#school\/([^/]+)$/);
-  const dashboard = document.getElementById("dashboard");
-  const schoolPage = document.getElementById("school-page");
   if (match) showSchoolPage(decodeURIComponent(match[1]));
+  else if (location.hash === "#admin" && currentUser.role === "admin") showAdminPage();
   else {
     currentCharts.forEach((chart) => chart.destroy());
     currentCharts = [];
-    schoolPage.hidden = true;
-    dashboard.hidden = false;
+    showView("dashboard");
     if (statsStale) refreshDashboardNumbers();
     if (map) setTimeout(() => { map.invalidateSize(); fitMapToLoiret(); }, 0);
   }
@@ -784,7 +734,14 @@ function route() {
 
 async function init() {
   document.getElementById("back-button").addEventListener("click", () => { location.hash = "dashboard"; });
-  setupAlertsDialog();
+  setupAccountDialog(); // account.js
+  setupActionDialog(); // actions.js
+  setupAdmin(); // admin.js
+  // Any [data-close] button closes its dialog.
+  document.addEventListener("click", (event) => {
+    const closer = event.target.closest("[data-close]");
+    if (closer) closer.closest("dialog")?.close();
+  });
   document.getElementById("export-list").replaceWith(
     Object.assign(
       exportButton("Exporter (CSV)", () => `/exports/colleges.csv?tri=${rankingMode}`, "Tous les collèges, dans l’ordre affiché, pour Excel"),
@@ -798,6 +755,7 @@ async function init() {
   window.addEventListener("hashchange", route);
   document.getElementById("logout-button").addEventListener("click", () => {
     accessToken = null;
+    currentUser = null;
     location.hash = "dashboard";
     showLogin();
   });
@@ -851,4 +809,5 @@ async function loadDashboard() {
   }
 }
 
-init();
+// After every deferred script (actions.js, account.js, admin.js) has run.
+document.addEventListener("DOMContentLoaded", init);

@@ -20,21 +20,93 @@
       <span class="data-badge"><span class="live-dot"></span> Données de référence</span>
       <div id="account-controls" class="account-controls" hidden>
         <span id="account-name"></span>
-        <button id="alerts-button" type="button" hidden>Alertes e-mail</button>
+        <a id="admin-link" class="nav-link" href="#admin" hidden>Utilisateurs</a>
+        <button id="account-button" type="button">Mon compte</button>
         <button id="logout-button" type="button">Déconnexion</button>
       </div>
     </header>
 
-    <dialog id="alerts-dialog" class="alerts-dialog" aria-labelledby="alerts-title">
-      <form id="alerts-form" method="dialog">
-        <h2 id="alerts-title">Alertes e-mail</h2>
+    <dialog id="account-dialog" class="app-dialog" aria-labelledby="account-title">
+      <div class="dialog-head">
+        <h2 id="account-title">Mon compte</h2>
+        <button type="button" class="dialog-close" data-close aria-label="Fermer">×</button>
+      </div>
+      <form id="alerts-form" class="dialog-section">
+        <h3>Alertes e-mail</h3>
         <p class="muted small">Un point chaque lundi : actions en retard ou à échéance dans les 7 jours, PPMS à mettre à jour. Rien n’est envoyé les semaines sans élément.</p>
         <label class="ppms-field"><span>Adresse e-mail</span><input id="alerts-email" type="email" maxlength="254" autocomplete="email"></label>
         <label class="alerts-check"><input id="alerts-enabled" type="checkbox"> Recevoir le point hebdomadaire</label>
-        <p id="alerts-error" class="ppms-error" role="alert" hidden></p>
+        <p class="form-message" role="status" hidden></p>
+        <div class="alerts-buttons"><button type="submit" class="primary">Enregistrer les alertes</button></div>
+      </form>
+      <form id="password-form" class="dialog-section">
+        <h3>Mot de passe</h3>
+        <label class="ppms-field"><span>Mot de passe actuel</span><input name="current" type="password" autocomplete="current-password" required></label>
+        <label class="ppms-field"><span>Nouveau mot de passe (12 caractères minimum)</span><input name="new" type="password" autocomplete="new-password" minlength="12" required></label>
+        <label class="ppms-field"><span>Confirmer le nouveau mot de passe</span><input name="confirm" type="password" autocomplete="new-password" minlength="12" required></label>
+        <p class="form-message" role="status" hidden></p>
+        <div class="alerts-buttons"><button type="submit" class="primary">Changer le mot de passe</button></div>
+      </form>
+    </dialog>
+
+    <dialog id="action-dialog" class="app-dialog" aria-labelledby="action-title">
+      <form id="action-form">
+        <div class="dialog-head">
+          <h2 id="action-title">Nouvelle action</h2>
+          <button type="button" class="dialog-close" data-close aria-label="Fermer">×</button>
+        </div>
+        <label class="ppms-field"><span>Titre</span><input name="titre" required minlength="3" maxlength="200"></label>
+        <label class="ppms-field"><span>Description</span><textarea name="description" rows="3" maxlength="4000"></textarea></label>
+        <div class="form-row">
+          <label class="ppms-field"><span>Aléa</span><select name="alea"></select></label>
+          <label class="ppms-field"><span>Priorité</span><select name="priorite"></select></label>
+        </div>
+        <div class="form-row">
+          <label class="ppms-field"><span>Statut</span><select name="statut"></select></label>
+          <label class="ppms-field"><span>Échéance</span><input name="echeance" type="date"></label>
+        </div>
+        <label class="ppms-field"><span>Responsable</span><input name="responsable" maxlength="200" placeholder="Nom ou fonction"></label>
+        <p class="form-message" role="alert" hidden></p>
         <div class="alerts-buttons">
-          <button type="button" id="alerts-cancel">Annuler</button>
-          <button type="submit" id="alerts-save" class="primary">Enregistrer</button>
+          <button type="button" data-close>Annuler</button>
+          <button type="submit" class="primary">Enregistrer</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="user-dialog" class="app-dialog wide" aria-labelledby="user-title">
+      <form id="user-form">
+        <div class="dialog-head">
+          <h2 id="user-title">Nouvel utilisateur</h2>
+          <button type="button" class="dialog-close" data-close aria-label="Fermer">×</button>
+        </div>
+        <div class="form-row">
+          <label class="ppms-field"><span>Identifiant</span><input name="username" required minlength="3" maxlength="100" autocomplete="off"></label>
+          <label class="ppms-field"><span>Rôle</span>
+            <select name="role">
+              <option value="lecteur">Lecteur (lecture seule)</option>
+              <option value="referent">Référent (ses collèges)</option>
+              <option value="admin">Administrateur</option>
+            </select>
+          </label>
+        </div>
+        <label class="ppms-field"><span data-password-label>Mot de passe (12 caractères minimum)</span><input name="password" type="password" minlength="12" autocomplete="new-password"></label>
+        <fieldset class="school-picker" data-referent-only>
+          <legend>Collèges suivis <span data-school-count class="muted"></span></legend>
+          <input type="search" data-school-filter placeholder="Filtrer par nom, commune ou UAI" aria-label="Filtrer les collèges">
+          <div data-school-options class="school-options"></div>
+        </fieldset>
+        <div class="form-row">
+          <label class="ppms-field"><span>Adresse e-mail</span><input name="email" type="email" maxlength="254"></label>
+          <div class="checks">
+            <label class="alerts-check"><input name="alertes_email" type="checkbox"> Alertes e-mail</label>
+            <label class="alerts-check" data-edit-only><input name="active" type="checkbox"> Compte actif</label>
+          </div>
+        </div>
+        <p class="form-message" role="alert" hidden></p>
+        <div class="alerts-buttons">
+          <button type="button" data-close>Annuler</button>
+          <button type="submit" class="primary">Enregistrer</button>
         </div>
       </form>
     </dialog>
@@ -112,6 +184,15 @@
         <p class="disclaimer">Les scores sont des indicateurs de priorisation et ne constituent pas une classification officielle.</p>
       </section>
 
+      <section id="admin-page" class="view" hidden>
+        <div class="page-heading">
+          <div><p class="eyebrow">ADMINISTRATION</p><h1>Utilisateurs</h1></div>
+          <button id="new-user-button" type="button" class="primary-button">Nouvel utilisateur</button>
+        </div>
+        <div id="admin-error" class="error-banner" role="alert" hidden></div>
+        <section class="panel"><div id="user-table" class="user-table" aria-live="polite"></div></section>
+      </section>
+
       <section id="school-page" class="view school-view" hidden>
         <button id="back-button" class="back-button" type="button"><span aria-hidden="true">←</span> Retour à la carte</button>
         <div id="school-error" class="error-banner" role="alert" hidden></div>
@@ -124,5 +205,8 @@
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
     <script src="/app.js" defer></script>
+    <script src="/actions.js" defer></script>
+    <script src="/account.js" defer></script>
+    <script src="/admin.js" defer></script>
   </body>
 </html>

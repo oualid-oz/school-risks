@@ -31,7 +31,7 @@ editor = require_roles(UserRole.admin, UserRole.referent)
 
 def _known(store: DataStore, uai: str) -> None:
     if not store.exists(uai):
-        raise HTTPException(404, f"College {uai} not found")
+        raise HTTPException(404, f"Collège {uai} introuvable")
 
 
 @router.get("", response_model=PpmsDetail)
@@ -124,7 +124,7 @@ def _delete(request, session, user, uai, model, entry_id, event):
     require_school_access(session, user, uai)
     entry = session.get(model, entry_id)
     if entry is None or entry.uai != uai:
-        raise HTTPException(404, "Entry not found")
+        raise HTTPException(404, "Entrée introuvable")
     record_audit(session, request, user, event, model.__tablename__, entry_id, {"uai": uai})
     session.delete(entry)
     session.commit()

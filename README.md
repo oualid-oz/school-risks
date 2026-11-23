@@ -221,6 +221,7 @@ tests/                   # pytest + TestClient, in-memory SQLite
 | GET | `/exports/colleges.csv?…` | Schools as CSV for Excel (same filters and order as `/colleges`, plus each hazard's score) |
 | GET | `/exports/actions.csv?…` | Actions as CSV for Excel (same filters and access as `/actions`) |
 | GET | `/colleges/{uai}/fiche.pdf` | One-page PDF "fiche risques" of a school |
+| POST | `/auth/me/password` | Change your own password (`current_password`, `new_password`); returns a new token, older ones are revoked |
 | PATCH | `/auth/me` | Own account: `email`, `alertes_email` (weekly digest opt-in; admins and referents) |
 | GET/POST | `/actions` | List actions (filter by `uai`, `alea`, `statut`, `priorite`, `en_retard`) or create one |
 | GET/PATCH/DELETE | `/actions/{id}` | Read, update or delete one action |
@@ -274,7 +275,7 @@ The reasons appear in the school's risk-profile alerts, like the DICRIM alert. T
 
 ### Email alerts (weekly digest)
 
-Every Monday from 06:00 UTC, each **admin and referent who opted in** ("Alertes e-mail" button in the top bar, or `PATCH /auth/me`) gets one email:
+Every Monday from 06:00 UTC, each **admin and referent who opted in** ("Mon compte" in the top bar, or `PATCH /auth/me`) gets one email:
 - referents: their schools; admins: the whole department (15 lines per section, then a count);
 - sections: actions overdue, open actions due within 7 days (`SRT_DIGEST_DUE_SOON_DAYS`), PPMS not up to date;
 - nothing is sent in a week without any of these; readers never receive the digest.
@@ -297,41 +298,5 @@ Every Monday from 06:00 UTC, each **admin and referent who opted in** ("Alertes 
 ⚠️ These thresholds are a heuristic for setting priorities. They are not an official classification. Sprint 2 is where you review them.
 
 ---
+---
 
-## Next sprints
-
-Order: Sprint 8 is small and changes how priorities are read. Sprint 9 creates the PPMS data that Sprint 10 sends alerts about. Sprint 11 does not depend on the others and can move earlier if people ask for reports first.
-
-### ✅ Sprint 8: Priority weighted by pupils exposed
-- Keep `score_global` as it is (how dangerous the location is) and add a separate **priority index**: `score_global × effectif_total / 100`, i.e. "pupils exposed, weighted by risk". A score of 60 with 800 pupils then ranks above 70 with 150 pupils.
-- Schools without an `effectif_total` get no index and are flagged, instead of being treated as 0.
-- API: `GET /colleges?tri=priorite`, the index in the summaries and in `/stats` (pupils per risk level). It is stored in the yearly snapshots too (migration).
-- Frontend: sort by "priorité" in the list, and a map toggle score / priority.
-- **Done when:** the risk referent agrees with the new top 10 (**still to do**: review with them), and tests cover the missing-enrolment case (done).
-
-### ✅ Sprint 9: PPMS (safety plan) tracking
-- No open dataset exists, so the data is entered in the app: a `ppms` table (school, last update date, last drills by type: risques majeurs, intrusion, incendie, who entered it), keeping the history.
-- Rules (configurable): PPMS not updated for more than `SRT_PPMS_MAX_AGE_MONTHS` (default 12), or no drill this school year. They are shown as alerts in the risk profile, like the DICRIM alert.
-- Permissions follow actions: referents edit their own schools, lecteurs read, every change is audited.
-- Dashboard: how many schools have an outdated PPMS, and a filter `GET /colleges?ppms=a_jour|ancien|absent`.
-- **Done when:** a referent can enter a PPMS and the drills for their school, and the outdated ones are visible on the dashboard. Done; **still to do:** confirm the rules with whoever is responsible for safety plans.
-
-### ✅ Sprint 10: Email alerts
-- Users get an `email` (migration) and an opt-in for alerts.
-- Weekly digest per referent for their schools: overdue actions, actions due within 7 days, outdated PPMS (Sprint 9). Admins get a department-wide summary.
-- Sending through SMTP settings (any provider). Locally, a "log only" mode writes the emails to the logs instead of sending them.
-- Scheduling: an internal endpoint protected by a secret, called by **Vercel Cron** (`vercel.json` `crons`, `CRON_SECRET`) or by a small cron service in docker compose.
-- A `notification_log` table makes every run idempotent: running twice in the same week sends nothing twice.
-- **Done when:** a referent receives the digest in a real inbox, a second run sends nothing, and the whole run fits in the Vercel function time limit. Tested against a local SMTP server, including the second run sending nothing; **still to do:** configure a real provider and check a real inbox.
-
-### ✅ Sprint 11: Exports (CSV and PDF)
-- CSV: the list of schools with their scores (same filters as the API) and the list of actions. Referents only export their own schools. The files open correctly in French Excel (UTF-8 with BOM, `;` separator).
-- PDF "fiche risques" per school: identity, score per hazard, alerts, PPMS status, open actions and score history. Built with **fpdf2** (pure Python, works on Vercel; WeasyPrint needs system libraries Vercel does not have).
-- Download buttons on the school page and the dashboard. Exports are written to the audit log.
-- **Done when:** a referent downloads the fiche for one of their schools and gets a 403 for any other school.
-
-### Carried over from earlier sprints
-- Sprint 2: review the risk thresholds with a risk referent, and add unit tests for each hazard function.
-- Sprint 3: action history and comments (the audit log only records who changed which fields).
-- Sprint 6: schedule the data refresh (for example a monthly GitHub Actions job that runs the pipeline and opens a pull request with the report).
-- Frontend for the spatial endpoints: click the map to see the sector and its schools, and "schools near me".

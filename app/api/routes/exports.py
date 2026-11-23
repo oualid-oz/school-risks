@@ -117,10 +117,10 @@ def export_fiche(
     """One-page (or two) risk summary of a school, to print or attach."""
     college = store.get_college(uai)
     if college is None:
-        raise HTTPException(404, f"College {uai} not found")
+        raise HTTPException(404, f"Collège {uai} introuvable")
     scope = _scope(session, user)
     if scope is not None and uai not in scope:
-        raise HTTPException(403, "No access to this school")
+        raise HTTPException(403, "Pas d’accès à ce collège")
     ppms = ppms_statuses(session, [uai])[uai]
     profile = college["profil_risque"]
     data = FicheData(
