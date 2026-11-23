@@ -15,6 +15,8 @@ let map;
 let mapBounds = null;
 let mapNeedsFit = false;
 let schools = [];
+let rankingMode = "score"; // "score": risk of the location, "priorite": pupils exposed × risk
+let schoolMarkers = [];
 let currentCharts = [];
 let accessToken = null;
 
@@ -89,7 +91,7 @@ function renderStats(stats) {
   const openActions = (stats.actions_par_statut?.a_faire || 0) + (stats.actions_par_statut?.en_cours || 0);
   const values = [
     [nf.format(stats.nb_colleges), "Collèges suivis", "dans le département"],
-    [nf.format(stats.nb_eleves), "Élèves scolarisés", "effectif de référence"],
+    [nf.format(stats.nb_eleves), "Élèves scolarisés", `dont ${nf.format(stats.eleves_par_niveau?.eleve || 0)} en risque élevé`],
     [nf.format(stats.par_niveau?.eleve || 0), "Risque élevé", "score global ≥ 50"],
     [nf.format(openActions), "Actions ouvertes", "à faire ou en cours"],
   ];
@@ -105,21 +107,64 @@ function renderStats(stats) {
 function schoolRow(school, rank) {
   const button = element("button", "school-row");
   button.type = "button";
-  button.setAttribute("aria-label", `Ouvrir ${school.nom}, score ${school.score_global}`);
+  const byPriority = rankingMode === "priorite";
+  const index = school.indice_priorite;
+  button.setAttribute(
+    "aria-label",
+    byPriority
+      ? `Ouvrir ${school.nom}, indice de priorité ${index ?? "inconnu"}, score ${school.score_global}`
+      : `Ouvrir ${school.nom}, score ${school.score_global}`
+  );
   const number = element("span", "rank", String(rank).padStart(2, "0"));
   const name = element("span", "school-name");
-  name.append(element("strong", "", school.nom), element("small", "", `${school.commune} · ${school.alea_principal.replaceAll("_", " ")}`));
+  const pupils = school.effectif_total == null ? "effectif inconnu" : `${nf.format(school.effectif_total)} élèves`;
+  const detail = byPriority
+    ? `${school.commune} · ${pupils} · score ${school.score_global}`
+    : `${school.commune} · ${school.alea_principal.replaceAll("_", " ")}`;
+  name.append(element("strong", "", school.nom), element("small", "", detail));
   const score = element("span", `score ${riskClass(school.score_global)}`);
-  score.append(document.createTextNode(String(school.score_global)));
-  score.append(element("small", "", " / 100"));
+  if (byPriority) {
+    score.append(document.createTextNode(index == null ? "—" : nf.format(Math.round(index))));
+    score.append(element("small", "", "indice"));
+  } else {
+    score.append(document.createTextNode(String(school.score_global)));
+    score.append(element("small", "", " / 100"));
+  }
   button.append(number, name, score);
   button.addEventListener("click", () => openSchool(school.uai));
   return button;
 }
 
+// Same order as the API (`GET /colleges?tri=`): unknown indices last.
+function rankSchools(list) {
+  const sorted = [...list];
+  if (rankingMode === "priorite") {
+    sorted.sort((a, b) => (b.indice_priorite ?? -1) - (a.indice_priorite ?? -1) || b.score_global - a.score_global);
+  } else {
+    sorted.sort((a, b) => b.score_global - a.score_global);
+  }
+  return sorted;
+}
+
+const RANKING_CAPTIONS = {
+  score: "Classés selon leur score global de risque.",
+  priorite: "Classés selon les élèves exposés, pondérés par le risque (score × effectif / 100).",
+};
+
+function setRankingMode(mode) {
+  rankingMode = mode;
+  document.querySelectorAll("[data-ranking]").forEach((button) => {
+    button.setAttribute("aria-pressed", String(button.dataset.ranking === mode));
+  });
+  document.getElementById("ranking-caption").textContent = RANKING_CAPTIONS[mode];
+  document.getElementById("legend-size").hidden = mode !== "priorite";
+  renderSchoolList(schools);
+  styleMarkers();
+}
+
 function renderSchoolList(list) {
   const container = document.getElementById("school-list");
-  container.replaceChildren(...list.slice(0, 8).map((school, index) => schoolRow(school, index + 1)));
+  container.replaceChildren(...rankSchools(list).slice(0, 8).map((school, index) => schoolRow(school, index + 1)));
   document.getElementById("school-count").textContent = String(list.length);
   document.getElementById("map-count").textContent = `${list.length} collèges`;
 }
@@ -128,7 +173,10 @@ function popupContent(school) {
   const popup = element("div", "map-popup");
   popup.append(
     element("strong", "", school.nom),
-    element("small", "", `${school.commune} · ${school.score_global}/100`)
+    element("small", "", `${school.commune} · ${school.score_global}/100`),
+    element("small", "", school.indice_priorite == null
+      ? "Indice de priorité : effectif inconnu"
+      : `Indice de priorité : ${nf.format(Math.round(school.indice_priorite))} (${nf.format(school.effectif_total)} élèves)`)
   );
   const button = element("button", "", "Voir la fiche");
   button.type = "button";
@@ -163,6 +211,7 @@ function renderMap(geojson) {
   }).addTo(map);
 
   const markerGroup = L.featureGroup();
+  schoolMarkers = [];
   schools.forEach((school) => {
     if (!Number.isFinite(school.lat) || !Number.isFinite(school.lon)) return;
     const marker = L.circleMarker([school.lat, school.lon], {
@@ -175,12 +224,30 @@ function renderMap(geojson) {
     marker.bindPopup(popupContent(school));
     marker.bindTooltip(element("span", "", school.nom), { direction: "top", offset: [0, -6] });
     marker.addTo(markerGroup);
+    schoolMarkers.push({ marker, school });
   });
   markerGroup.addTo(map);
+  styleMarkers();
   const bounds = sectors.getBounds();
   mapBounds = bounds.isValid() ? bounds : null;
   mapNeedsFit = true;
   fitMapToLoiret();
+}
+
+// In priority mode the dot's area is proportional to the index (radius ∝ √index), so a
+// big school with a medium score stands out; the colour always stays the risk level.
+function markerRadius(school) {
+  if (rankingMode !== "priorite") return 6;
+  if (school.indice_priorite == null) return 4;
+  return Math.max(4, Math.min(22, 0.85 * Math.sqrt(school.indice_priorite)));
+}
+
+function styleMarkers() {
+  const ordered = [...schoolMarkers].sort((a, b) => markerRadius(b.school) - markerRadius(a.school));
+  ordered.forEach(({ marker, school }) => {
+    marker.setRadius(markerRadius(school));
+    marker.bringToFront(); // big dots first, small ones on top, so none is hidden
+  });
 }
 
 // Leaflet can only fit bounds once the map container is visible and has a size.
@@ -418,6 +485,9 @@ function route() {
 
 async function init() {
   document.getElementById("back-button").addEventListener("click", () => { location.hash = "dashboard"; });
+  document.querySelectorAll("[data-ranking]").forEach((button) => {
+    button.addEventListener("click", () => setRankingMode(button.dataset.ranking));
+  });
   setupSearch();
   window.addEventListener("hashchange", route);
   document.getElementById("logout-button").addEventListener("click", () => {

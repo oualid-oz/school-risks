@@ -9,6 +9,7 @@ class RiskProfile(BaseModel):
     niveau: str
     alea_principal: str
     aleas: dict[str, float]
+    indice_priorite: float | None  # score_global × effectif_total / 100; None if unknown
     alertes: list[str]
 
 
@@ -25,6 +26,7 @@ class CollegeSummary(BaseModel):
     score_global: float
     niveau: str
     alea_principal: str
+    indice_priorite: float | None
 
 
 class CollegeNearby(CollegeSummary):

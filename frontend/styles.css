@@ -81,6 +81,12 @@ h2 { font: 700 15px Manrope, sans-serif; letter-spacing: -.02em; margin-bottom: 
 .legend-dot { width: 9px; height: 9px; border-radius: 50%; background: #aeb8b0; }
 .low { background: #54a879; } .medium { background: #e5a749; } .high { background: #d65b50; } .unknown { background: #aeb8b0; }
 .schools-panel { min-height: 100%; }
+.ranking-toggle { display: inline-flex; margin: 0 19px 9px; padding: 3px; border-radius: 8px; background: #f3f5f3; gap: 2px; }
+.ranking-toggle button { border: 0; background: transparent; color: var(--muted); border-radius: 6px; padding: 5px 10px; font-size: 10px; font-weight: 700; cursor: pointer; }
+.ranking-toggle button[aria-pressed="true"] { background: var(--surface); color: var(--green); box-shadow: 0 1px 3px rgb(22 46 33 / 12%); }
+.ranking-toggle button:focus-visible { outline: 2px solid var(--green); outline-offset: 1px; }
+.legend-size { width: 14px; height: 14px; border-radius: 50%; border: 1.5px solid #8a968e; position: relative; }
+.legend-size::after { content: ""; position: absolute; width: 6px; height: 6px; border-radius: 50%; border: 1.5px solid #8a968e; left: 2.5px; top: 2.5px; box-sizing: border-box; }
 .count-pill { border-radius: 20px; background: #eff5f0; color: var(--green); padding: 5px 9px; font-size: 10px; font-weight: 700; }
 .school-list { padding: 0 12px 12px; }
 .school-row { border-top: 1px solid #eff1ef; width: 100%; background: transparent; border-right: 0; border-left: 0; border-bottom: 0; padding: 12px 7px; cursor: pointer; display: grid; grid-template-columns: 31px 1fr auto; text-align: left; align-items: center; gap: 10px; }

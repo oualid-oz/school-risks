@@ -73,6 +73,7 @@
               <span><i class="legend-dot medium"></i> Modéré <small>30–49</small></span>
               <span><i class="legend-dot high"></i> Élevé <small>50–100</small></span>
               <span><i class="legend-dot unknown"></i> Sans donnée</span>
+              <span id="legend-size" hidden><i class="legend-size" aria-hidden="true"></i> Taille : élèves exposés × risque</span>
             </div>
           </section>
 
@@ -81,7 +82,11 @@
               <div><p class="eyebrow">À SURVEILLER</p><h2>Collèges prioritaires</h2></div>
               <span id="school-count" class="count-pill">—</span>
             </div>
-            <p class="panel-caption">Classés selon leur score global de risque.</p>
+            <div class="ranking-toggle" role="group" aria-label="Classer les collèges">
+              <button type="button" data-ranking="score" aria-pressed="true">Score de risque</button>
+              <button type="button" data-ranking="priorite" aria-pressed="false">Élèves exposés</button>
+            </div>
+            <p id="ranking-caption" class="panel-caption">Classés selon leur score global de risque.</p>
             <div id="school-list" class="school-list" aria-live="polite"></div>
           </aside>
         </div>

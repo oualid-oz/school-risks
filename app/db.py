@@ -62,6 +62,7 @@ def init_db() -> None:
         )
     if not is_postgres():
         SQLModel.metadata.create_all(engine)
+        _add_missing_sqlite_columns()
         return
     current, head = migration_status(engine)
     if current != head:
@@ -69,6 +70,27 @@ def init_db() -> None:
             f"Database schema is at revision {current}, code expects {head}. "
             "Run: alembic upgrade head"
         )
+
+
+def _add_missing_sqlite_columns() -> None:
+    """SQLite has no migrations here: create_all() makes missing tables but never adds a
+    column to an existing one, so add new nullable columns (e.g. from a later sprint)."""
+    inspector = inspect(engine)
+    with engine.begin() as conn:
+        for table in SQLModel.metadata.sorted_tables:
+            if not inspector.has_table(table.name):
+                continue
+            existing = {c["name"] for c in inspector.get_columns(table.name)}
+            for column in table.columns:
+                if column.name in existing:
+                    continue
+                if not column.nullable:
+                    raise RuntimeError(
+                        f"{table.name}.{column.name} is new and NOT NULL: recreate the SQLite "
+                        "database or use Postgres with Alembic."
+                    )
+                ddl = column.type.compile(dialect=engine.dialect)
+                conn.execute(text(f'ALTER TABLE "{table.name}" ADD COLUMN "{column.name}" {ddl}'))
 
 
 def get_session() -> Iterator[Session]:

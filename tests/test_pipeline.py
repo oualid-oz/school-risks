@@ -201,5 +201,7 @@ def test_snapshot_is_stored_once_per_year_and_served(client):
     rows = client.get(f"{API}/colleges/{SCHOOL}/scores-annuels").json()
     assert [r["annee"] for r in rows] == [2025, 2026]
     assert rows[0]["score_global"] == store.get_profile(SCHOOL)["score_global"]
+    assert rows[0]["indice_priorite"] == store.get_profile(SCHOOL)["indice_priorite"]
+    assert rows[0]["effectif_total"] == store.get_college(SCHOOL)["effectif_total"]
     assert set(rows[0]["aleas"]) == set(store.get_profile(SCHOOL)["aleas"])
     assert client.get(f"{API}/colleges/0000000X/scores-annuels").status_code == 404

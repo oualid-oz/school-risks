@@ -78,7 +78,10 @@ class DataStore:
         secteur_id: str | None = None,
         niveau: str | None = None,
         q: str | None = None,
+        tri: str = "score",
     ) -> list[dict[str, Any]]:
+        """Filtered schools, highest first by ``tri``: "score" (risk of the location) or
+        "priorite" (pupils exposed, weighted by risk; schools without an index last)."""
         out = []
         for uai, r in self._risk_rows.items():
             p = self._profiles[uai]
@@ -93,6 +96,12 @@ class DataStore:
             if q and q.lower() not in f"{r['nom']} {r['commune']} {uai}".lower():
                 continue
             out.append(self._summary(r, p))
+        if tri == "priorite":
+            return sorted(
+                out,
+                key=lambda x: (x["indice_priorite"] is not None, x["indice_priorite"] or 0, x["score_global"]),
+                reverse=True,
+            )
         return sorted(out, key=lambda x: x["score_global"], reverse=True)
 
     def get_college(self, uai: str) -> dict[str, Any] | None:
@@ -147,20 +156,26 @@ class DataStore:
 
     # ---- stats ----------------------------------------------------------
     def stats(self) -> dict[str, Any]:
-        profiles = list(self._profiles.values())
         rows = list(self._risk_rows.values())
+        profiles = [self._profiles[r["uai"]] for r in rows]
         niveaux: dict[str, int] = {}
-        for p in profiles:
+        eleves: dict[str, int] = {}
+        for r, p in zip(rows, profiles, strict=True):
             niveaux[p["niveau"]] = niveaux.get(p["niveau"], 0) + 1
+            eleves[p["niveau"]] = eleves.get(p["niveau"], 0) + int(r["effectif_total"] or 0)
         hazards = profiles[0]["aleas"].keys() if profiles else []
         return {
             "nb_colleges": len(rows),
             "nb_eleves": int(sum(r["effectif_total"] or 0 for r in rows)),
             "par_niveau": niveaux,
+            "eleves_par_niveau": eleves,
+            "sans_effectif": sum(1 for p in profiles if p["indice_priorite"] is None),
             "dans_ppri": sum(1 for r in rows if r["dans_ppri"]),
             "dans_zone_tmd_500m": sum(1 for r in rows if r["dans_zone_tmd_500m"]),
             "argiles_fort": sum(1 for r in rows if r["argiles_classe"] == "fort"),
-            "dicrim_absent_ou_ancien": sum(1 for p in profiles if p["alertes"]),
+            "dicrim_absent_ou_ancien": sum(
+                1 for p in profiles if any(a.startswith("DICRIM") for a in p["alertes"])
+            ),
             "score_moyen_par_alea": {
                 h: round(sum(p["aleas"][h] for p in profiles) / len(profiles), 1)
                 for h in hazards
@@ -187,6 +202,7 @@ class DataStore:
             "score_global": p["score_global"],
             "niveau": p["niveau"],
             "alea_principal": p["alea_principal"],
+            "indice_priorite": p["indice_priorite"],
         }
 
 
