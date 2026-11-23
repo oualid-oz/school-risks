@@ -86,6 +86,11 @@ class UserUpdate(SQLModel):
     _email = field_validator("email")(_check_email)
 
 
+class PasswordChange(SQLModel):
+    current_password: str = Field(min_length=1, max_length=256)
+    new_password: str = Field(min_length=12, max_length=256)
+
+
 class MyAccountUpdate(SQLModel):
     """What users may change on their own account."""
 

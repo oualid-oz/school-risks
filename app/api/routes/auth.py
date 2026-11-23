@@ -22,6 +22,7 @@ from app.models.security import (
     AuditLog,
     AuditLogRead,
     MyAccountUpdate,
+    PasswordChange,
     TokenRead,
     User,
     UserCollegeLink,
@@ -69,11 +70,11 @@ def _validate_school_assignments(
 ) -> None:
     if role != UserRole.referent and school_uais:
         raise HTTPException(
-            status_code=422, detail="Only referents can be assigned to schools"
+            status_code=422, detail="Seuls les référents peuvent être rattachés à des collèges"
         )
     unknown = sorted(uai for uai in set(school_uais) if not store.exists(uai))
     if unknown:
-        raise HTTPException(status_code=422, detail=f"Unknown college UAI(s): {unknown}")
+        raise HTTPException(status_code=422, detail=f"UAI de collège inconnu(s) : {', '.join(unknown)}")
 
 
 @router.post("/token", response_model=TokenRead)
@@ -100,7 +101,7 @@ def issue_token(
         session.commit()
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect username or password",
+            detail="Identifiant ou mot de passe incorrect",
             headers={"WWW-Authenticate": "Bearer"},
         )
     record_audit(session, request, user, "auth.login_succeeded", "user", user.id)
@@ -119,6 +120,33 @@ def read_current_user(
     session: Session = Depends(get_session),
 ):
     return _user_read(session, user)
+
+
+@router.post("/me/password", response_model=TokenRead)
+@limiter.limit(settings.rate_limit_login)  # it checks a password: same limit as the login
+def change_own_password(
+    payload: PasswordChange,
+    request: Request,
+    user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    """Change your own password. Every token issued before is revoked (the password hash is
+    part of the token), so a new one is returned to stay signed in on this device."""
+    if not password_hash.verify(payload.current_password, user.hashed_password):
+        record_audit(session, request, user, "user.password_change_failed", "user", user.id)
+        session.commit()
+        raise HTTPException(status_code=400, detail="Mot de passe actuel incorrect")
+    if payload.new_password == payload.current_password:
+        raise HTTPException(status_code=422, detail="Le nouveau mot de passe doit être différent de l’actuel")
+    user.hashed_password = hash_password(payload.new_password)
+    record_audit(session, request, user, "user.password_changed", "user", user.id)
+    session.add(user)
+    session.commit()
+    session.refresh(user)
+    return TokenRead(
+        access_token=create_access_token(user),
+        expires_in=settings.access_token_expire_minutes * 60,
+    )
 
 
 @router.patch("/me", response_model=UserRead)
@@ -169,7 +197,7 @@ def create_user(
     admin: User = Depends(require_roles(UserRole.admin)),
 ):
     if session.exec(select(User).where(User.username == payload.username)).first():
-        raise HTTPException(status_code=409, detail="Username already exists")
+        raise HTTPException(status_code=409, detail="Cet identifiant existe déjà")
     _validate_school_assignments(store, payload.role, payload.school_uais)
     user = User(
         username=payload.username,
@@ -184,7 +212,7 @@ def create_user(
         session.flush()
     except IntegrityError:
         session.rollback()
-        raise HTTPException(status_code=409, detail="Username already exists") from None
+        raise HTTPException(status_code=409, detail="Cet identifiant existe déjà") from None
     for uai in sorted(set(payload.school_uais)):
         session.add(UserCollegeLink(user_id=user.id, uai=uai))
     record_audit(
@@ -213,13 +241,16 @@ def update_user(
 ):
     user = session.get(User, user_id)
     if user is None:
-        raise HTTPException(status_code=404, detail="User not found")
+        raise HTTPException(status_code=404, detail="Utilisateur introuvable")
 
     changes = payload.model_dump(exclude_unset=True)
     new_role = changes.get("role", user.role)
     new_active = changes.get("active", user.active)
     if user.id == admin.id and (new_role != UserRole.admin or not new_active):
-        raise HTTPException(status_code=422, detail="You cannot disable or demote yourself")
+        raise HTTPException(
+            status_code=422,
+            detail="Vous ne pouvez pas désactiver votre propre compte ni retirer votre rôle d’administrateur",
+        )
     if user.role == UserRole.admin and user.active and (
         new_role != UserRole.admin or not new_active
     ):
@@ -227,7 +258,10 @@ def update_user(
             select(User).where(User.role == UserRole.admin, User.active.is_(True))
         ).all()
         if len(admins) <= 1:
-            raise HTTPException(status_code=422, detail="Cannot disable the last administrator")
+            raise HTTPException(
+                status_code=422,
+                detail="Impossible de désactiver ou de rétrograder le dernier administrateur actif",
+            )
 
     if "school_uais" in changes:
         school_uais = changes["school_uais"] or []

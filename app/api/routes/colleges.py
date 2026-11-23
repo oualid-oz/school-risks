@@ -84,7 +84,7 @@ def get_college(
 ):
     college = store.get_college(uai)
     if college is None:
-        raise HTTPException(404, f"College {uai} not found")
+        raise HTTPException(404, f"Collège {uai} introuvable")
     return {**college, "profil_risque": _with_ppms_alerts(college["profil_risque"], session, uai)}
 
 
@@ -98,7 +98,7 @@ def get_risk_profile(
 ):
     profile = store.get_profile(uai)
     if profile is None:
-        raise HTTPException(404, f"College {uai} not found")
+        raise HTTPException(404, f"Collège {uai} introuvable")
     return _with_ppms_alerts(profile, session, uai)
 
 
@@ -112,7 +112,7 @@ def _with_ppms_alerts(profile: dict, session: Session, uai: str) -> dict:
 def get_history(request: Request, uai: str, store: DataStore = Depends(get_store)):
     """Yearly enrolment, IPS and DNB results (2016 → 2025)."""
     if not store.exists(uai):
-        raise HTTPException(404, f"College {uai} not found")
+        raise HTTPException(404, f"Collège {uai} introuvable")
     return store.get_history(uai)
 
 
@@ -126,5 +126,5 @@ def get_score_history(
 ):
     """Risk scores stored by the yearly snapshots, oldest first."""
     if not store.exists(uai):
-        raise HTTPException(404, f"College {uai} not found")
+        raise HTTPException(404, f"Collège {uai} introuvable")
     return history_for(session, uai)

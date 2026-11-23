@@ -51,5 +51,5 @@ def get_secteur(
 ):
     feature = store.get_secteur(secteur_id)
     if feature is None:
-        raise HTTPException(404, f"Secteur {secteur_id} not found")
+        raise HTTPException(404, f"Secteur {secteur_id} introuvable")
     return feature
