@@ -74,6 +74,14 @@ class Settings(BaseSettings):
     # A DICRIM older than this (years) is flagged as outdated.
     dicrim_max_age_years: int = 10
 
+    # PPMS (safety plan). Outdated when the last update is older than this many months, or
+    # when no drill of a counted type was held this school year once the grace period at the
+    # start of the year (from 1 September) is over. Fire drills are recorded but follow other
+    # rules, so they do not count by default.
+    ppms_max_age_months: int = 12
+    ppms_exercices_comptes: list[str] = ["risques_majeurs", "intrusion"]
+    ppms_delai_exercice_jours: int = 90
+
     @property
     def on_vercel(self) -> bool:
         return os.environ.get("VERCEL") == "1"

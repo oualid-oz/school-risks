@@ -8,10 +8,12 @@ Create Date: ${create_date}
 from collections.abc import Sequence
 
 import geoalchemy2  # noqa: F401
-import sqlalchemy as sa
+import sqlalchemy as sa  # noqa: F401
 import sqlmodel  # noqa: F401  (autogenerate refers to sqlmodel types)
-from alembic import op
-${imports if imports else ""}
+from alembic import op  # noqa: F401
+% if imports:
+${imports}
+% endif
 
 # revision identifiers, used by Alembic.
 revision: str = ${repr(up_revision)}

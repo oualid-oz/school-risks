@@ -17,6 +17,8 @@ let mapNeedsFit = false;
 let schools = [];
 let rankingMode = "score"; // "score": risk of the location, "priorite": pupils exposed × risk
 let schoolMarkers = [];
+let currentUser = null;
+let statsStale = false; // a PPMS change happened: refresh the dashboard numbers on return
 let currentCharts = [];
 let accessToken = null;
 
@@ -38,9 +40,14 @@ function text(value, fallback = "Non renseigné") {
   return value == null || value === "" ? fallback : String(value);
 }
 
-async function getJson(path) {
+async function apiRequest(path, { method = "GET", body } = {}) {
   const headers = accessToken ? { Authorization: `Bearer ${accessToken}` } : {};
-  const response = await fetch(`${API}${path}`, { headers });
+  if (body !== undefined) headers["Content-Type"] = "application/json";
+  const response = await fetch(`${API}${path}`, {
+    method,
+    headers,
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
   if (!response.ok) {
     if (response.status === 401 && accessToken) {
       accessToken = null;
@@ -48,14 +55,22 @@ async function getJson(path) {
     }
     let message = `Erreur ${response.status}`;
     try {
-      const body = await response.json();
-      if (body.detail) message = body.detail;
+      const payload = await response.json();
+      if (typeof payload.detail === "string") message = payload.detail;
+      // FastAPI validation errors: [{loc, msg}, …]
+      else if (Array.isArray(payload.detail)) {
+        message = payload.detail.map((d) => String(d.msg).replace(/^Value error, /, "")).join(" · ");
+      }
     } catch (error) {
       if (!(error instanceof SyntaxError)) throw error;
     }
     throw new Error(message);
   }
-  return response.json();
+  return response.status === 204 ? null : response.json();
+}
+
+function getJson(path) {
+  return apiRequest(path);
 }
 
 function element(tag, className, value) {
@@ -82,6 +97,7 @@ function showLogin(message = "") {
 }
 
 function showAccount(user) {
+  currentUser = user;
   document.getElementById("login-screen").hidden = true;
   document.getElementById("account-controls").hidden = false;
   document.getElementById("account-name").textContent = `${user.username} · ${user.role}`;
@@ -90,7 +106,11 @@ function showAccount(user) {
 function renderStats(stats) {
   const openActions = (stats.actions_par_statut?.a_faire || 0) + (stats.actions_par_statut?.en_cours || 0);
   const values = [
-    [nf.format(stats.nb_colleges), "Collèges suivis", "dans le département"],
+    [
+      `${nf.format(stats.ppms_par_statut?.a_jour || 0)} / ${nf.format(stats.nb_colleges)}`,
+      "PPMS à jour",
+      `${nf.format(stats.ppms_par_statut?.ancien || 0)} à mettre à jour · ${nf.format(stats.ppms_par_statut?.absent || 0)} non renseignés`,
+    ],
     [nf.format(stats.nb_eleves), "Élèves scolarisés", `dont ${nf.format(stats.eleves_par_niveau?.eleve || 0)} en risque élevé`],
     [nf.format(stats.par_niveau?.eleve || 0), "Risque élevé", "score global ≥ 50"],
     [nf.format(openActions), "Actions ouvertes", "à faire ou en cours"],
@@ -383,7 +403,7 @@ function actionCard(action) {
   return card;
 }
 
-function renderSchool(school, actions, history) {
+function renderSchool(school, actions, history, ppms) {
   const root = document.getElementById("school-content");
   const profile = school.profil_risque;
   const header = element("div", "school-header");
@@ -439,12 +459,203 @@ function renderSchool(school, actions, history) {
 
   root.replaceChildren(header);
   const grid = element("div", "detail-grid");
-  grid.append(riskPanel, historyPanel, actionsPanel);
+  grid.append(riskPanel, historyPanel, ppmsPanel(school.uai, ppms), actionsPanel);
   root.append(grid);
   currentCharts.forEach((chart) => chart.destroy());
   currentCharts = [];
   renderRiskChart(radar, profile);
   renderHistoryChart(historyCanvas, history);
+}
+
+// ---- PPMS ---------------------------------------------------------------------------
+const PPMS_STATUS = {
+  a_jour: ["À jour", "ppms-ok"],
+  ancien: ["À mettre à jour", "ppms-late"],
+  absent: ["Non renseigné", "ppms-missing"],
+};
+const DRILL_LABELS = { risques_majeurs: "Risques majeurs", intrusion: "Intrusion", incendie: "Incendie" };
+
+function frDate(isoDate) {
+  return isoDate ? new Date(`${isoDate}T00:00:00`).toLocaleDateString("fr-FR") : "—";
+}
+
+function todayIso() {
+  const now = new Date();
+  return new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+}
+
+function canEditSchool(uai) {
+  if (!currentUser) return false;
+  return currentUser.role === "admin" || (currentUser.role === "referent" && currentUser.school_uais.includes(uai));
+}
+
+async function refreshDashboardNumbers() {
+  try {
+    const [stats, collegeData] = await Promise.all([getJson("/stats"), getJson("/colleges")]);
+    schools = collegeData;
+    renderStats(stats);
+    statsStale = false;
+  } catch (error) {
+    showError("dashboard-error", `Impossible de mettre à jour les chiffres : ${error.message}`);
+  }
+}
+
+function field(labelText, input) {
+  const label = element("label", "ppms-field");
+  label.append(element("span", "", labelText), input);
+  return label;
+}
+
+function ppmsForm(title, fields, onSubmit) {
+  const form = element("form", "ppms-form");
+  const error = element("p", "ppms-error");
+  error.hidden = true;
+  const submit = element("button", "", "Enregistrer");
+  submit.type = "submit";
+  form.append(element("h3", "", title), ...fields, submit, error);
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    error.hidden = true;
+    submit.disabled = true;
+    try {
+      await onSubmit();
+    } catch (err) {
+      error.textContent = err.message;
+      error.hidden = false;
+      submit.disabled = false;
+    }
+  });
+  return form;
+}
+
+function dateInput() {
+  const input = element("input");
+  input.type = "date";
+  input.required = true;
+  input.max = todayIso();
+  input.value = todayIso();
+  return input;
+}
+
+function commentInput() {
+  const input = element("input");
+  input.type = "text";
+  input.maxLength = 1000;
+  input.placeholder = "Facultatif";
+  return input;
+}
+
+async function afterPpmsChange(uai) {
+  statsStale = true;
+  await showSchoolPage(uai);
+}
+
+function historyList(title, entries, describe, onDelete) {
+  const section = element("div", "ppms-history-list");
+  section.append(element("h3", "", title));
+  if (!entries.length) {
+    section.append(element("p", "muted small", "Aucune entrée."));
+    return section;
+  }
+  const list = element("ul");
+  entries.forEach((entry) => {
+    const item = element("li");
+    const textPart = element("div");
+    textPart.append(element("strong", "", describe(entry)), element("small", "", `${entry.commentaire ? `${entry.commentaire} · ` : ""}saisi par ${entry.created_by_username}`));
+    item.append(textPart);
+    if (onDelete) {
+      const remove = element("button", "ppms-delete", "Supprimer");
+      remove.type = "button";
+      remove.setAttribute("aria-label", `Supprimer : ${describe(entry)}`);
+      remove.addEventListener("click", async () => {
+        if (!window.confirm(`Supprimer « ${describe(entry)} » ? La suppression reste tracée dans le journal d’audit.`)) return;
+        remove.disabled = true;
+        try {
+          await onDelete(entry);
+        } catch (err) {
+          remove.disabled = false;
+          window.alert(err.message);
+        }
+      });
+      item.append(remove);
+    }
+    list.append(item);
+  });
+  section.append(list);
+  return section;
+}
+
+function ppmsPanel(uai, ppms) {
+  const status = ppms.statut;
+  const [label, badgeClass] = PPMS_STATUS[status.statut];
+  const panel = element("section", "panel detail-panel ppms-panel");
+  panel.append(
+    element("h2", "", "PPMS — plan particulier de mise en sûreté"),
+    element("p", "panel-caption", `Année scolaire ${status.annee_scolaire}`)
+  );
+
+  const summary = element("div", "ppms-summary");
+  const dates = status.derniere_mise_a_jour
+    ? `Dernière mise à jour : ${frDate(status.derniere_mise_a_jour)} · à revoir avant le ${frDate(status.prochaine_mise_a_jour)}`
+    : "Aucune mise à jour enregistrée.";
+  summary.append(element("span", `ppms-badge ${badgeClass}`, label), element("span", "ppms-dates", dates));
+  panel.append(summary);
+  if (status.raisons.length) {
+    const reasons = element("ul", "alert-list");
+    status.raisons.forEach((reason) => reasons.append(element("li", "", reason)));
+    panel.append(reasons);
+  }
+  const drills = element("div", "action-tags ppms-drills");
+  Object.entries(DRILL_LABELS).forEach(([kind, kindLabel]) => {
+    const day = status.exercices_annee[kind];
+    drills.append(element("span", day ? "" : "late", `${kindLabel} : ${day ? frDate(day) : "aucun cette année"}`));
+  });
+  panel.append(drills);
+
+  const editable = canEditSchool(uai);
+  const base = `/colleges/${encodeURIComponent(uai)}/ppms`;
+  if (editable) {
+    const revisionDate = dateInput();
+    const revisionComment = commentInput();
+    const drillType = element("select");
+    Object.entries(DRILL_LABELS).forEach(([kind, kindLabel]) => {
+      const option = element("option", "", kindLabel);
+      option.value = kind;
+      drillType.append(option);
+    });
+    const drillDate = dateInput();
+    const drillComment = commentInput();
+    const forms = element("div", "ppms-forms");
+    forms.append(
+      ppmsForm("Mise à jour du PPMS", [field("Date de mise à jour", revisionDate), field("Commentaire", revisionComment)], async () => {
+        await apiRequest(`${base}/revisions`, {
+          method: "POST",
+          body: { date_mise_a_jour: revisionDate.value, commentaire: revisionComment.value || null },
+        });
+        await afterPpmsChange(uai);
+      }),
+      ppmsForm("Exercice réalisé", [field("Type", drillType), field("Date", drillDate), field("Commentaire", drillComment)], async () => {
+        await apiRequest(`${base}/exercices`, {
+          method: "POST",
+          body: { type_exercice: drillType.value, date_exercice: drillDate.value, commentaire: drillComment.value || null },
+        });
+        await afterPpmsChange(uai);
+      })
+    );
+    panel.append(forms);
+  }
+
+  const historyGrid = element("div", "ppms-history");
+  historyGrid.append(
+    historyList("Mises à jour", ppms.revisions, (r) => `Mise à jour du ${frDate(r.date_mise_a_jour)}`, editable
+      ? async (r) => { await apiRequest(`${base}/revisions/${r.id}`, { method: "DELETE" }); await afterPpmsChange(uai); }
+      : null),
+    historyList("Exercices", ppms.exercices, (e) => `${DRILL_LABELS[e.type_exercice]} · ${frDate(e.date_exercice)}`, editable
+      ? async (e) => { await apiRequest(`${base}/exercices/${e.id}`, { method: "DELETE" }); await afterPpmsChange(uai); }
+      : null)
+  );
+  panel.append(historyGrid);
+  return panel;
 }
 
 async function openSchool(uai) {
@@ -457,12 +668,13 @@ async function showSchoolPage(uai) {
   document.getElementById("school-error").hidden = true;
   document.getElementById("school-content").replaceChildren(element("div", "empty-state", "Chargement de la fiche…"));
   try {
-    const [school, history, actions] = await Promise.all([
+    const [school, history, actions, ppms] = await Promise.all([
       getJson(`/colleges/${encodeURIComponent(uai)}`),
       getJson(`/colleges/${encodeURIComponent(uai)}/historique`),
       getJson(`/actions?uai=${encodeURIComponent(uai)}`),
+      getJson(`/colleges/${encodeURIComponent(uai)}/ppms`),
     ]);
-    renderSchool(school, actions, history);
+    renderSchool(school, actions, history, ppms);
   } catch (error) {
     document.getElementById("school-content").replaceChildren();
     showError("school-error", `Impossible de charger cette fiche : ${error.message}`);
@@ -479,6 +691,7 @@ function route() {
     currentCharts = [];
     schoolPage.hidden = true;
     dashboard.hidden = false;
+    if (statsStale) refreshDashboardNumbers();
     if (map) setTimeout(() => { map.invalidateSize(); fitMapToLoiret(); }, 0);
   }
 }

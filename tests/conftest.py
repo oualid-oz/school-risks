@@ -26,11 +26,7 @@ def client(monkeypatch):
     monkeypatch.setattr(settings, "database_url", "sqlite://")
     monkeypatch.setattr(app_db, "engine", engine)
     get_store.cache_clear()
-    from app.models import (
-        security,  # noqa: F401
-        snapshots,  # noqa: F401
-        tracking,  # noqa: F401
-    )
+    app_db.register_models()  # every table, including ones added later
 
     SQLModel.metadata.create_all(engine)
 

@@ -214,6 +214,10 @@ tests/                   # pytest + TestClient, in-memory SQLite
 | GET | `/secteurs?with_scores=true` | GeoJSON of the sectors, with each school's score attached |
 | GET | `/secteurs/localiser?lat=&lon=` | Sector containing a point, and its schools (PostGIS) |
 | GET | `/secteurs/{secteur_id}` | One sector polygon |
+| GET | `/colleges?ppms=a_jour\|ancien\|absent` | Filter by PPMS status (every row has `ppms_statut`) |
+| GET | `/colleges/{uai}/ppms` | PPMS status (computed), plan updates and drills |
+| POST/DELETE | `/colleges/{uai}/ppms/revisions[/{id}]` | Record or remove a PPMS update (admin, referent of the school) |
+| POST/DELETE | `/colleges/{uai}/ppms/exercices[/{id}]` | Record or remove a drill: `risques_majeurs`, `intrusion`, `incendie` |
 | GET/POST | `/actions` | List actions (filter by `uai`, `alea`, `statut`, `priorite`, `en_retard`) or create one |
 | GET/PATCH/DELETE | `/actions/{id}` | Read, update or delete one action |
 | GET | `/stats` | Risk distribution and action progress |
@@ -244,6 +248,20 @@ With the current data the index goes from 31 to 582. Compared with the score ran
 The dashboard can rank the list by score or by pupils exposed. In "élèves exposés" mode the map dots are sized by the index (area ∝ index), and their colour stays the risk level.
 Yearly snapshots store the pupil count and the index from Sprint 8 on. Older snapshots leave them empty.
 
+### PPMS status
+
+No open dataset lists the PPMS (safety plans), so referents record them in the app on the school page: each update of the plan and each drill (risques majeurs, intrusion, incendie), with a comment. Everything is kept as history and audited. A wrong entry can be deleted, and the deletion stays in the audit log.
+
+| Status | When |
+|---|---|
+| `absent` | No update recorded |
+| `ancien` | Last update older than `SRT_PPMS_MAX_AGE_MONTHS` (12), **or** no drill of a counted type (`SRT_PPMS_EXERCICES_COMPTES`: risques majeurs, intrusion) this school year, once `SRT_PPMS_DELAI_EXERCICE_JOURS` (90) days have passed since 1 September |
+| `a_jour` | Otherwise |
+
+The school year starts on 1 September. Fire drills are recorded but do not count by default, because they follow separate fire-safety rules.
+The reasons appear in the school's risk-profile alerts, like the DICRIM alert. The dashboard shows how many schools are up to date, and `GET /colleges?ppms=` filters by status.
+⚠️ These rules are a starting point: confirm them with whoever is responsible for safety plans, then adjust the three settings.
+
 ⚠️ These thresholds are a heuristic for setting priorities. They are not an official classification. Sprint 2 is where you review them.
 
 ---
@@ -259,12 +277,12 @@ Order: Sprint 8 is small and changes how priorities are read. Sprint 9 creates t
 - Frontend: sort by "priorité" in the list, and a map toggle score / priority.
 - **Done when:** the risk referent agrees with the new top 10 (**still to do**: review with them), and tests cover the missing-enrolment case (done).
 
-### ⏭ Sprint 9: PPMS (safety plan) tracking
+### ✅ Sprint 9: PPMS (safety plan) tracking
 - No open dataset exists, so the data is entered in the app: a `ppms` table (school, last update date, last drills by type: risques majeurs, intrusion, incendie, who entered it), keeping the history.
 - Rules (configurable): PPMS not updated for more than `SRT_PPMS_MAX_AGE_MONTHS` (default 12), or no drill this school year. They are shown as alerts in the risk profile, like the DICRIM alert.
 - Permissions follow actions: referents edit their own schools, lecteurs read, every change is audited.
 - Dashboard: how many schools have an outdated PPMS, and a filter `GET /colleges?ppms=a_jour|ancien|absent`.
-- **Done when:** a referent can enter a PPMS and the drills for their school, and the outdated ones are visible on the dashboard.
+- **Done when:** a referent can enter a PPMS and the drills for their school, and the outdated ones are visible on the dashboard. Done; **still to do:** confirm the rules with whoever is responsible for safety plans.
 
 ### ⏭ Sprint 10: Email alerts
 - Users get an `email` (migration) and an opt-in for alerts.
