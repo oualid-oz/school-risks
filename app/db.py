@@ -27,7 +27,7 @@ engine = make_engine(settings.database_url)
 
 
 def register_models() -> None:
-    from app.models import security, snapshots, tracking  # noqa: F401  (registers the tables)
+    from app.models import ppms, security, snapshots, tracking  # noqa: F401  (registers the tables)
 
 
 def alembic_config(url: str | None = None):

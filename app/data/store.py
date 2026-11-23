@@ -117,6 +117,9 @@ class DataStore:
     def get_profile(self, uai: str) -> dict[str, Any] | None:
         return self._profiles.get(uai)
 
+    def uais(self) -> list[str]:
+        return sorted(self._risk_rows)
+
     def all_profiles(self) -> dict[str, dict[str, Any]]:
         return dict(self._profiles)
 

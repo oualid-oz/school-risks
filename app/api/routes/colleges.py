@@ -16,6 +16,8 @@ from app.models.schemas import (
     YearRecord,
 )
 from app.models.snapshots import ScoreSnapshotRead
+from app.services.ppms import status_for as ppms_status_for
+from app.services.ppms import statuses as ppms_statuses
 from app.services.snapshots import history_for
 from app.services.spatial import colleges_near, require_postgis
 
@@ -38,10 +40,17 @@ def list_colleges(
         description="score: risk of the location. priorite: pupils exposed weighted by risk "
         "(score_global × effectif_total / 100); schools without enrolment come last.",
     ),
+    ppms: Literal["a_jour", "ancien", "absent"] | None = Query(
+        None, description="Only schools whose PPMS has this status"
+    ),
     store: DataStore = Depends(get_store),
+    session: Session = Depends(get_session),
 ):
-    """All schools, highest first by `tri`."""
-    return store.list_colleges(commune, statut, secteur_id, niveau, q, tri)
+    """All schools, highest first by `tri`, with the status of their PPMS."""
+    rows = store.list_colleges(commune, statut, secteur_id, niveau, q, tri)
+    status = ppms_statuses(session, [r["uai"] for r in rows])
+    rows = [{**r, "ppms_statut": status[r["uai"]].statut} for r in rows]
+    return [r for r in rows if ppms is None or r["ppms_statut"] == ppms]
 
 
 @router.get("/proches", response_model=list[CollegeNearby])
@@ -67,20 +76,35 @@ def nearby_colleges(
 
 @router.get("/{uai}", response_model=CollegeDetail)
 @limiter.limit(settings.rate_limit_default)
-def get_college(request: Request, uai: str, store: DataStore = Depends(get_store)):
+def get_college(
+    request: Request,
+    uai: str,
+    store: DataStore = Depends(get_store),
+    session: Session = Depends(get_session),
+):
     college = store.get_college(uai)
     if college is None:
         raise HTTPException(404, f"College {uai} not found")
-    return college
+    return {**college, "profil_risque": _with_ppms_alerts(college["profil_risque"], session, uai)}
 
 
 @router.get("/{uai}/risques", response_model=RiskProfile)
 @limiter.limit(settings.rate_limit_default)
-def get_risk_profile(request: Request, uai: str, store: DataStore = Depends(get_store)):
+def get_risk_profile(
+    request: Request,
+    uai: str,
+    store: DataStore = Depends(get_store),
+    session: Session = Depends(get_session),
+):
     profile = store.get_profile(uai)
     if profile is None:
         raise HTTPException(404, f"College {uai} not found")
-    return profile
+    return _with_ppms_alerts(profile, session, uai)
+
+
+def _with_ppms_alerts(profile: dict, session: Session, uai: str) -> dict:
+    """The stored profile plus PPMS alerts (a copy: the cached profile is shared)."""
+    return {**profile, "alertes": [*profile["alertes"], *ppms_status_for(session, uai).raisons]}
 
 
 @router.get("/{uai}/historique", response_model=list[YearRecord])

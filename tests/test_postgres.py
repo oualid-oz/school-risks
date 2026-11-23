@@ -148,3 +148,16 @@ def test_deploy_check_migrates_and_loads_an_empty_database(pg_engine, monkeypatc
     assert "loaded 70 schools" in capsys.readouterr().out
     assert manage.main(["deploy-check"]) == 0  # second build: data already there
     assert migration_status(pg_engine)[0] == migration_status(pg_engine)[1]
+
+
+def test_ppms_on_postgres(pg_client):
+    from datetime import date
+
+    school = pg_client.get(f"{API}/colleges").json()[0]["uai"]
+    today = str(date.today())
+    assert pg_client.post(f"{API}/colleges/{school}/ppms/revisions",
+                          json={"date_mise_a_jour": today}).status_code == 201
+    assert pg_client.post(f"{API}/colleges/{school}/ppms/exercices",
+                          json={"type_exercice": "intrusion", "date_exercice": today}).status_code == 201
+    assert pg_client.get(f"{API}/colleges/{school}/ppms").json()["statut"]["statut"] == "a_jour"
+    assert pg_client.get(f"{API}/stats").json()["ppms_par_statut"]["a_jour"] >= 1

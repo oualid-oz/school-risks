@@ -27,6 +27,7 @@ class CollegeSummary(BaseModel):
     niveau: str
     alea_principal: str
     indice_priorite: float | None
+    ppms_statut: str | None = None  # "a_jour" | "ancien" | "absent", in GET /colleges
 
 
 class CollegeNearby(CollegeSummary):
