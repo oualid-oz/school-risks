@@ -47,8 +47,8 @@ jobs:
           cache: pip
           cache-dependency-path: |
             requirements.lock
-            requirements-dev.txt
-      - run: pip install -r requirements-dev.txt -c requirements.lock
+            pyproject.toml
+      - run: pip install -e ".[dev]" -c requirements.lock
       - name: Tests (SQLite + PostGIS)
         run: pytest -q -rs
       - name: Migrations match the models

@@ -13,7 +13,7 @@ It also tracks the follow-up actions taken for each school.
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
-pip install -r requirements-dev.txt   # runtime + pytest + ruff
+pip install -e ".[dev]" -c requirements.lock   # app + pytest + ruff, tested versions
 uvicorn app.main:app --reload
 ```
 
@@ -87,8 +87,19 @@ Backups are `pg_dump` custom-format files of the whole database (users, actions,
 2. **test**: pytest on SQLite and on a PostGIS service container, then `alembic check` (models and migrations agree)
 3. **docker**: builds the image, starts the whole stack with `docker compose up --wait`, logs in, calls a PostGIS endpoint and takes a backup
 
-Locally: `pip install -r requirements-dev.txt`, then `ruff check .` and `pytest -q`.
-Dependency versions are pinned in `requirements.lock` (used by Docker and CI). After changing `requirements.txt`, regenerate it with `pip freeze` in a clean virtualenv.
+Locally: `pip install -e ".[dev]" -c requirements.lock`, then `ruff check .` and `pytest -q`.
+
+### Dependencies
+
+- `pyproject.toml` declares them: `[project] dependencies` (runtime, minimum versions) and the `dev` extra (pytest, ruff).
+- `requirements.lock` pins the exact runtime versions that were tested. Docker installs only from it, CI uses it as constraints.
+- After adding or upgrading a dependency in `pyproject.toml`, regenerate the lock in a clean virtualenv:
+
+```bash
+python -m venv /tmp/lockenv && /tmp/lockenv/bin/pip install .
+( echo "# Generated from pyproject.toml with pip freeze (runtime only). Do not edit by hand."
+  /tmp/lockenv/bin/pip freeze --exclude school-risk-tracker ) > requirements.lock
+```
 
 ## Security settings (env vars, prefix `SRT_`)
 
@@ -151,6 +162,8 @@ app/
 │   ├── snapshots.py     # score_snapshot table
 │   └── reference.py     # PostGIS tables: college, college_annee, secteur
 migrations/              # Alembic (Postgres schema)
+pyproject.toml           # dependencies + ruff / pytest settings
+requirements.lock        # exact tested versions (Docker, CI)
 └── api/routes/
     ├── colleges.py      # /colleges, /colleges/{uai}, /risques, /historique
     ├── secteurs.py      # /secteurs (GeoJSON with scores attached)
@@ -194,46 +207,6 @@ With the current thresholds the 70 schools split into 30 faible, 29 moyen and 11
 ⚠️ These thresholds are a heuristic for setting priorities. They are not an official classification. Sprint 2 is where you review them.
 
 ---
-
-# Sprint plan (2-week sprints)
-
-### ✅ Sprint 0: Setup (done in this scaffold)
-- Project structure, settings, data store, tests, Swagger docs
-
-### ✅ Sprint 1: Read-only API (done)
-- `/colleges`, `/colleges/{uai}`, `/historique`, `/secteurs`, filters, search
-- **Done when:** all 70 schools and 59 sectors are served and the tests are green
-
-### ✅ Sprint 2: Risk scoring (first version done; needs review)
-- Score per hazard, global score, level, main hazard, DICRIM alert
-- **To do:** review the thresholds with a risk referent and add unit tests for each hazard function
-- **Done when:** the people who own the data agree with the ranking of the top 10 schools
-
-### ✅ Sprint 3: Action tracking (first version done)
-- CRUD on actions (hazard, priority, status, owner, due date), overdue flag
-- **To do:** add Alembic migrations, an action history table (who changed what), and comments
-
-### ✅ Sprint 4: Map and dashboard frontend
-- Leaflet or MapLibre map of the sectors, colored by `score_max`, with school markers
-- School page: radar chart of the hazards, DNB/IPS history, list of actions
-- Options: a separate frontend (React or Vue) calling the API, or Dash or Streamlit calling the API
-- **Implementation:** lightweight static frontend served by FastAPI at `/`; it calls the `/api/v1` endpoints directly.
-- The map tiles and Leaflet/Chart.js assets are loaded from their public CDN sources.
-
-### ✅ Sprint 5: Users and security
-- Authentication with JWT or OAuth2 (`fastapi.security`)
-- Roles: `admin` (everything), `referent` (actions for their own schools), `lecteur` (read only)
-- Audit log, rate limiting, CORS limited to known origins
-
-### ✅ Sprint 6: Data pipeline and refresh
-- ✅ Script that rebuilds the parquet files from the source datasets (Géorisques API, data.education.gouv.fr): `python -m app.pipeline`
-- ✅ Snapshot the scores each year so you can track how a school's risk changes over time (`score_snapshot` table, `/colleges/{uai}/scores-annuels`)
-- ✅ Postgres + PostGIS (`docker-compose.yml`, Alembic migrations, reference tables with spatial indexes, `/secteurs/localiser` with `ST_Contains`, `/colleges/proches` with `ST_DWithin`)
-- **To do:** schedule the refresh (cron or CI job) once the first refresh has been reviewed
-
-### ✅ Sprint 7: Deployment
-- ✅ Dockerfile + docker-compose (API + PostGIS + Redis + migrations + backups), GitHub Actions CI (lint, tests, Docker smoke test)
-- ✅ Monitoring (`/health`, `/health/ready`, JSON logs with request ids), daily backups with retention and a restore command
 
 ### Backlog ideas
 - Email alerts when an action is overdue
