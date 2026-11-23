@@ -69,15 +69,15 @@ There is no persistent disk there, so it needs an external **Postgres with PostG
 
 **One-time setup**
 1. Create the database, for example with the Neon integration in the Vercel dashboard (it sets `DATABASE_URL`; Neon supports PostGIS).
-2. From your machine, against that database (use its direct, non-pooled URL):
+2. Optional, from your machine, to bring your existing users, actions and audit log
+   (use the database's direct, non-pooled URL):
    ```bash
    export SRT_DATABASE_URL='postgresql://…'   # postgres:// URLs are accepted as is
    alembic upgrade head
-   python -m app.manage load-reference        # needs pyarrow, which Vercel does not install
-   python -m app.manage copy-sqlite           # optional: users, actions, audit log from tracker.db
+   python -m app.manage copy-sqlite           # from tracker.db
    ```
 3. Project environment variables in Vercel: `SRT_JWT_SECRET_KEY`, `SRT_BOOTSTRAP_ADMIN_USERNAME` / `SRT_BOOTSTRAP_ADMIN_PASSWORD`, and `DATABASE_URL` (the pooled URL is fine). Recommended: `SRT_RATE_LIMIT_STORAGE_URI=rediss://…` (Upstash Redis), otherwise each function instance counts requests on its own.
-4. Push: Vercel installs `pyproject.toml` (without the `parquet` and `dev` extras: ~270 MB of the 500 MB limit), then runs `python -m app.manage deploy-check`. That runs `alembic upgrade head` and fails the build if the reference tables are empty.
+4. Push: Vercel installs `pyproject.toml` (without the `parquet` and `dev` extras: ~285 MB of the 500 MB limit), then runs `python -m app.manage deploy-check`. That runs `alembic upgrade head` and, when the reference tables are empty (new database, or a fresh Neon branch for a preview), loads `data/*.parquet` into them (with fastparquet, as pyarrow is not installed there).
 
 **What the app does by itself on Vercel** (`VERCEL=1`; any value you set explicitly wins):
 - refuses to start on SQLite (read-only filesystem);
@@ -85,7 +85,8 @@ There is no persistent disk there, so it needs an external **Postgres with PostG
 - logs JSON, and `/health` reports the commit (`VERCEL_GIT_COMMIT_SHA`);
 - connects without server-side prepared statements, so a transaction-mode pooler (Neon `-pooler` host, PgBouncer) works.
 
-**Preview deployments** run the same build step: give them their own database (Neon creates a branch per preview), or set `SRT_MIGRATE_ON_BUILD=0` for the Preview environment so a preview never migrates the production schema.
+**Preview deployments** run the same build step. With the Neon integration each preview gets its own database branch, which the build migrates and fills. If previews share the production database, set `SRT_MIGRATE_ON_BUILD=0` for the Preview environment: the build then never writes to the database.
+Only the **production branch** set in Vercel (Settings → Git) deploys to production: pushes to any other branch are previews.
 **Data refresh:** run the pipeline on your machine with `SRT_DATABASE_URL` pointing to the production database: `build --publish` reloads the PostGIS tables. New function instances pick the data up; redeploy to refresh the running ones.
 **Backups:** use the provider's (Neon keeps a point-in-time history), or `pg_dump` from your machine.
 
@@ -118,7 +119,7 @@ Locally: `pip install -e ".[dev]" -c requirements.lock`, then `ruff check .` and
 
 ### Dependencies
 
-- `pyproject.toml` declares them: `[project] dependencies` (what the API needs when it reads PostGIS), the `parquet` extra (pyarrow: SQLite mode, data pipeline, `load-reference`) and the `dev` extra (parquet + pytest + ruff).
+- `pyproject.toml` declares them: `[project] dependencies` (everything the API needs; parquet files are read with fastparquet), the `parquet` extra (pyarrow: faster, used by the data pipeline) and the `dev` extra (parquet + pytest + ruff).
 - `requirements.lock` pins the exact runtime versions that were tested. Docker installs only from it, CI uses it as constraints.
 - After adding or upgrading a dependency in `pyproject.toml`, regenerate the lock in a clean virtualenv:
 

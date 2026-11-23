@@ -95,9 +95,10 @@ def cmd_copy_sqlite(args: argparse.Namespace) -> int:
 
 
 def cmd_deploy_check(_: argparse.Namespace) -> int:
-    """Build step for serverless deployments (Vercel): migrate, then make sure the reference
-    data is in the database. Loading it needs pyarrow, which is not installed there to stay
-    under the bundle size limit, so it is done once from a workstation (see README)."""
+    """Build step for serverless deployments (Vercel): migrate, and load the reference data
+    shipped in data/ when the tables are empty (a new database, or a fresh Neon branch for a
+    preview deployment). With SRT_MIGRATE_ON_BUILD=0 the build never writes to the database.
+    """
     import os
 
     from alembic import command
@@ -108,8 +109,9 @@ def cmd_deploy_check(_: argparse.Namespace) -> int:
     _require_postgres()
     # Messages go to stdout and stderr: flush each line so build logs keep their order.
     sys.stdout.reconfigure(line_buffering=True)
-    if os.environ.get("SRT_MIGRATE_ON_BUILD", "1").lower() in {"0", "false", "no"}:
-        print("SRT_MIGRATE_ON_BUILD is off: migrations skipped.")
+    may_write = os.environ.get("SRT_MIGRATE_ON_BUILD", "1").lower() not in {"0", "false", "no"}
+    if not may_write:
+        print("SRT_MIGRATE_ON_BUILD is off: the build does not write to the database.")
     else:
         command.upgrade(alembic_config(), "head")
         print("Schema is up to date.")
@@ -120,10 +122,17 @@ def cmd_deploy_check(_: argparse.Namespace) -> int:
         return 1
     with engine.connect() as conn:
         schools = conn.execute(select(func.count()).select_from(college)).scalar_one()
+    if not schools and may_write:
+        from app.services.reference_db import load_reference
+
+        counts = load_reference(engine)
+        schools = counts["college"]
+        print(f"Reference tables were empty: loaded {schools} schools, "
+              f"{counts['college_annee']} school years, {counts['secteur']} sectors.")
     if not schools:
         print(
             "The reference tables are empty: run `python -m app.manage load-reference` "
-            "against this database from a workstation, then redeploy.",
+            "against this database, then redeploy.",
             file=sys.stderr,
         )
         return 1
