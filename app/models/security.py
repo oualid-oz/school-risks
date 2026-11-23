@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime
 from enum import Enum
 
+import sqlalchemy as sa
+from pydantic import field_validator
 from sqlmodel import Field, SQLModel
 
 
@@ -21,6 +24,9 @@ class User(SQLModel, table=True):
     role: UserRole = Field(default=UserRole.lecteur, index=True)
     active: bool = True
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    # Weekly digest (Sprint 10): opt-in, for admins and referents.
+    email: str | None = Field(default=None, max_length=254)
+    alertes_email: bool = Field(default=False, sa_column_kwargs={"server_default": sa.false()})
 
 
 class UserCollegeLink(SQLModel, table=True):
@@ -44,11 +50,29 @@ class AuditLog(SQLModel, table=True):
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC), index=True)
 
 
+# Deliberately simple: one "@", a dot in the domain, no spaces. The real check is the
+# email reaching the inbox; this only catches typos.
+_EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+def _check_email(value: str | None) -> str | None:
+    if value is None or value.strip() == "":
+        return None
+    value = value.strip()
+    if len(value) > 254 or not _EMAIL.match(value):
+        raise ValueError("adresse e-mail invalide")
+    return value
+
+
 class UserCreate(SQLModel):
     username: str = Field(min_length=3, max_length=100)
     password: str = Field(min_length=12, max_length=256)
     role: UserRole = UserRole.lecteur
     school_uais: list[str] = Field(default_factory=list)
+    email: str | None = None
+    alertes_email: bool = False
+
+    _email = field_validator("email")(_check_email)
 
 
 class UserUpdate(SQLModel):
@@ -56,6 +80,19 @@ class UserUpdate(SQLModel):
     role: UserRole | None = None
     active: bool | None = None
     school_uais: list[str] | None = None
+    email: str | None = None
+    alertes_email: bool | None = None
+
+    _email = field_validator("email")(_check_email)
+
+
+class MyAccountUpdate(SQLModel):
+    """What users may change on their own account."""
+
+    email: str | None = None
+    alertes_email: bool | None = None
+
+    _email = field_validator("email")(_check_email)
 
 
 class UserRead(SQLModel):
@@ -64,6 +101,8 @@ class UserRead(SQLModel):
     role: UserRole
     active: bool
     school_uais: list[str]
+    email: str | None
+    alertes_email: bool
     created_at: datetime
 
 

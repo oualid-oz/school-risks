@@ -5,5 +5,11 @@
       "maxDuration": 30,
       "excludeFiles": "{tests/**,docs/**,deploy/**,backups/**,.github/**,data/raw/**,data/staging/**,data/archive/**,**/*.db,Dockerfile,docker-compose.yml}"
     }
-  }
+  },
+  "crons": [
+    {
+      "path": "/api/v1/internal/digest",
+      "schedule": "0 7 * * *"
+    }
+  ]
 }

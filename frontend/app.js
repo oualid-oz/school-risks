@@ -98,6 +98,8 @@ function showLogin(message = "") {
 
 function showAccount(user) {
   currentUser = user;
+  // Digests are for admins and referents (the API refuses them for readers).
+  document.getElementById("alerts-button").hidden = !["admin", "referent"].includes(user.role);
   document.getElementById("login-screen").hidden = true;
   document.getElementById("account-controls").hidden = false;
   document.getElementById("account-name").textContent = `${user.username} · ${user.role}`;
@@ -658,6 +660,39 @@ function ppmsPanel(uai, ppms) {
   return panel;
 }
 
+// ---- Email alerts (own account) -------------------------------------------------------
+function setupAlertsDialog() {
+  const dialog = document.getElementById("alerts-dialog");
+  const email = document.getElementById("alerts-email");
+  const enabled = document.getElementById("alerts-enabled");
+  const error = document.getElementById("alerts-error");
+  const save = document.getElementById("alerts-save");
+  document.getElementById("alerts-button").addEventListener("click", () => {
+    email.value = currentUser?.email || "";
+    enabled.checked = Boolean(currentUser?.alertes_email);
+    error.hidden = true;
+    dialog.showModal();
+  });
+  document.getElementById("alerts-cancel").addEventListener("click", () => dialog.close());
+  document.getElementById("alerts-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    error.hidden = true;
+    save.disabled = true;
+    try {
+      currentUser = await apiRequest("/auth/me", {
+        method: "PATCH",
+        body: { email: email.value.trim() || null, alertes_email: enabled.checked },
+      });
+      dialog.close();
+    } catch (err) {
+      error.textContent = err.message;
+      error.hidden = false;
+    } finally {
+      save.disabled = false;
+    }
+  });
+}
+
 async function openSchool(uai) {
   location.hash = `school/${encodeURIComponent(uai)}`;
 }
@@ -698,6 +733,7 @@ function route() {
 
 async function init() {
   document.getElementById("back-button").addEventListener("click", () => { location.hash = "dashboard"; });
+  setupAlertsDialog();
   document.querySelectorAll("[data-ranking]").forEach((button) => {
     button.addEventListener("click", () => setRankingMode(button.dataset.ranking));
   });

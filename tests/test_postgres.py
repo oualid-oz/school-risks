@@ -161,3 +161,52 @@ def test_ppms_on_postgres(pg_client):
                           json={"type_exercice": "intrusion", "date_exercice": today}).status_code == 201
     assert pg_client.get(f"{API}/colleges/{school}/ppms").json()["statut"]["statut"] == "a_jour"
     assert pg_client.get(f"{API}/stats").json()["ppms_par_statut"]["a_jour"] >= 1
+
+
+def test_digest_is_sent_once_per_week_on_postgres(pg_client, pg_engine, monkeypatch):
+    from datetime import UTC, datetime, timedelta
+
+    from sqlmodel import select
+
+    from app.models.notifications import NotificationLog
+    from app.services import digest as digest_service
+
+    sent = []
+
+    class Box:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            pass
+
+        def send(self, email):
+            sent.append(email.to)
+
+    monkeypatch.setattr(digest_service, "get_mailer", Box)
+    # a school with something to report (no PPMS recorded by earlier tests)
+    school = pg_client.get(f"{API}/colleges", params={"ppms": "absent"}).json()[0]["uai"]
+    pg_client.post(f"{API}/auth/users", json={
+        "username": "pg-digest-ref", "password": "a-strong-test-password", "role": "referent",
+        "school_uais": [school], "email": "pg-ref@example.fr", "alertes_email": True,
+    }).raise_for_status()
+    monday = datetime(2026, 11, 23, 8, tzinfo=UTC)
+    with Session(pg_engine) as session:
+        first = digest_service.send_digests(session, get_store(), now=monday)
+        second = digest_service.send_digests(session, get_store(), now=monday + timedelta(hours=2))
+        rows = session.exec(select(NotificationLog).where(NotificationLog.period == "2026-W48")).all()
+        # a failed row is taken over by exactly one of two competing runs (compare-and-set)
+        row = rows[0]
+        row.status = "failed"
+        session.add(row)
+        session.commit()
+        old_stamp = row.updated_at
+    assert (first["sent"], second["already_sent"]) == (1, 1)
+    assert sent == ["pg-ref@example.fr"]
+    with Session(pg_engine) as a, Session(pg_engine) as b:
+        user_a = a.get(digest_service.User, row.user_id)
+        user_b = b.get(digest_service.User, row.user_id)
+        winner = digest_service._claim(a, user_a, "2026-W48", monday + timedelta(hours=3))
+        loser = digest_service._claim(b, user_b, "2026-W48", monday + timedelta(hours=3))
+        assert winner is not None and winner.updated_at != old_stamp
+        assert loser is None

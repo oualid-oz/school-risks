@@ -20,6 +20,14 @@ x-app-env: &app-env
   SRT_TRUSTED_PROXIES: ${SRT_TRUSTED_PROXIES:-[]}
   SRT_RATE_LIMIT_STORAGE_URI: redis://redis:6379/0
   SRT_LOG_LEVEL: ${SRT_LOG_LEVEL:-INFO}
+  SRT_PUBLIC_URL: ${SRT_PUBLIC_URL:-http://localhost:8000}
+  SRT_MAIL_BACKEND: ${SRT_MAIL_BACKEND:-log}
+  SRT_MAIL_FROM: ${SRT_MAIL_FROM:-School Risk Tracker <no-reply@localhost>}
+  SRT_SMTP_HOST: ${SRT_SMTP_HOST:-}
+  SRT_SMTP_PORT: ${SRT_SMTP_PORT:-587}
+  SRT_SMTP_SECURITY: ${SRT_SMTP_SECURITY:-starttls}
+  SRT_SMTP_USERNAME: ${SRT_SMTP_USERNAME:-}
+  SRT_SMTP_PASSWORD: ${SRT_SMTP_PASSWORD:-}
 
 x-logging: &logging
   driver: json-file
@@ -92,6 +100,24 @@ services:
     # `security_opt: no-new-privileges` would be good too, but the snap-packaged Docker
     # refuses to exec anything with it ("operation not permitted"); add it on servers
     # running Docker from the official packages.
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    logging: *logging
+
+  # Weekly email digests. Runs every hour; the app sends from Monday 06:00 UTC, once per
+  # person and week, so restarts or a missed hour never cause a double send.
+  scheduler:
+    image: school-risks-api:${BUILD_VERSION:-dev}
+    restart: unless-stopped
+    command: ["sh", "-c", "while true; do python -m app.manage send-digests; sleep 3600; done"]
+    environment:
+      <<: *app-env
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
     read_only: true
     tmpfs:
       - /tmp

@@ -218,6 +218,7 @@ tests/                   # pytest + TestClient, in-memory SQLite
 | GET | `/colleges/{uai}/ppms` | PPMS status (computed), plan updates and drills |
 | POST/DELETE | `/colleges/{uai}/ppms/revisions[/{id}]` | Record or remove a PPMS update (admin, referent of the school) |
 | POST/DELETE | `/colleges/{uai}/ppms/exercices[/{id}]` | Record or remove a drill: `risques_majeurs`, `intrusion`, `incendie` |
+| PATCH | `/auth/me` | Own account: `email`, `alertes_email` (weekly digest opt-in; admins and referents) |
 | GET/POST | `/actions` | List actions (filter by `uai`, `alea`, `statut`, `priorite`, `en_retard`) or create one |
 | GET/PATCH/DELETE | `/actions/{id}` | Read, update or delete one action |
 | GET | `/stats` | Risk distribution and action progress |
@@ -262,6 +263,28 @@ The school year starts on 1 September. Fire drills are recorded but do not count
 The reasons appear in the school's risk-profile alerts, like the DICRIM alert. The dashboard shows how many schools are up to date, and `GET /colleges?ppms=` filters by status.
 ⚠️ These rules are a starting point: confirm them with whoever is responsible for safety plans, then adjust the three settings.
 
+### Email alerts (weekly digest)
+
+Every Monday from 06:00 UTC, each **admin and referent who opted in** ("Alertes e-mail" button in the top bar, or `PATCH /auth/me`) gets one email:
+- referents: their schools; admins: the whole department (15 lines per section, then a count);
+- sections: actions overdue, open actions due within 7 days (`SRT_DIGEST_DUE_SOON_DAYS`), PPMS not up to date;
+- nothing is sent in a week without any of these; readers never receive the digest.
+
+**At most one email per person and week**, however often the job runs: a `notification_log` row (unique per person and ISO week) is claimed before sending. A failed send is retried at the next run, and so is a claim left by a run that died (after 15 minutes). If the mail server cannot be reached, the run stops and the rest waits for the next run.
+
+| Setting | Default | |
+|---|---|---|
+| `SRT_MAIL_BACKEND` | `log` | `log` writes the emails to the logs (nothing is sent). `smtp` sends them |
+| `SRT_SMTP_HOST` / `_PORT` / `_SECURITY` / `_USERNAME` / `_PASSWORD` | — / 587 / `starttls` | Any provider (Brevo, Mailjet, SES, the academy's relay, …). `_SECURITY`: `starttls`, `ssl` or `none` |
+| `SRT_MAIL_FROM` | `School Risk Tracker <no-reply@localhost>` | Use an address of a domain the provider is allowed to send for (SPF/DKIM) |
+| `SRT_PUBLIC_URL` | `http://localhost:8000` | Base of the links in the emails |
+| `CRON_SECRET` | — | Enables `GET/POST /api/v1/internal/digest` (`Authorization: Bearer …`) |
+
+**Who triggers it**
+- **Vercel**: `vercel.json` has a daily cron (07:00 UTC) on `/api/v1/internal/digest`; set `CRON_SECRET` in the project and Vercel sends it. Daily is deliberate: Monday sends, and Tuesday finishes anything Monday could not (20 s time budget per run).
+- **Docker**: the `scheduler` service runs `python -m app.manage send-digests` every hour.
+- **By hand**: `python -m app.manage send-digests --dry-run` builds and logs the emails without sending; `--force` sends before Monday 06:00.
+
 ⚠️ These thresholds are a heuristic for setting priorities. They are not an official classification. Sprint 2 is where you review them.
 
 ---
@@ -284,13 +307,13 @@ Order: Sprint 8 is small and changes how priorities are read. Sprint 9 creates t
 - Dashboard: how many schools have an outdated PPMS, and a filter `GET /colleges?ppms=a_jour|ancien|absent`.
 - **Done when:** a referent can enter a PPMS and the drills for their school, and the outdated ones are visible on the dashboard. Done; **still to do:** confirm the rules with whoever is responsible for safety plans.
 
-### ⏭ Sprint 10: Email alerts
+### ✅ Sprint 10: Email alerts
 - Users get an `email` (migration) and an opt-in for alerts.
 - Weekly digest per referent for their schools: overdue actions, actions due within 7 days, outdated PPMS (Sprint 9). Admins get a department-wide summary.
 - Sending through SMTP settings (any provider). Locally, a "log only" mode writes the emails to the logs instead of sending them.
 - Scheduling: an internal endpoint protected by a secret, called by **Vercel Cron** (`vercel.json` `crons`, `CRON_SECRET`) or by a small cron service in docker compose.
 - A `notification_log` table makes every run idempotent: running twice in the same week sends nothing twice.
-- **Done when:** a referent receives the digest in a real inbox, a second run sends nothing, and the whole run fits in the Vercel function time limit.
+- **Done when:** a referent receives the digest in a real inbox, a second run sends nothing, and the whole run fits in the Vercel function time limit. Tested against a local SMTP server, including the second run sending nothing; **still to do:** configure a real provider and check a real inbox.
 
 ### ⏭ Sprint 11: Exports (CSV and PDF)
 - CSV: the list of schools with their scores (same filters as the API) and the list of actions. Referents only export their own schools. The files open correctly in French Excel (UTF-8 with BOM, `;` separator).
