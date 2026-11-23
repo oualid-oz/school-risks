@@ -1,11 +1,38 @@
+# Python
 .venv/
 __pycache__/
+*.py[cod]
+*.egg-info/
 .pytest_cache/
-*.db
-.env
 .ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+
+# Secrets: only the template is committed
+.env
+.env.*
+!.env.example
+
+# Local databases (SQLite)
+*.db
+*.db-journal
+*.sqlite3
+
+# Data pipeline outputs (the published data/*.parquet and the GeoJSON stay committed)
 data/raw/
 data/staging/
 data/archive/
+data/.*.tmp
+
+# Database backups
 backups/*
 !backups/.gitkeep
+
+# Logs
+*.log
