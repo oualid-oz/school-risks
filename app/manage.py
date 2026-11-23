@@ -3,6 +3,7 @@
     python -m app.manage check                         # schema revision vs code
     python -m app.manage load-reference                # data/*.parquet + GeoJSON -> PostGIS
     python -m app.manage copy-sqlite --from tracker.db # users, actions, audit log, snapshots
+    python -m app.manage deploy-check                  # Vercel build step (see pyproject.toml)
 
 Run `alembic upgrade head` first on a new Postgres database.
 """
@@ -23,7 +24,7 @@ COPY_ORDER = ["app_user", "user_college", "action", "audit_log", "score_snapshot
 
 def _require_postgres() -> None:
     if not is_postgres():
-        sys.exit("SRT_DATABASE_URL must point to Postgres for this command.")
+        sys.exit("SRT_DATABASE_URL (or DATABASE_URL) must point to Postgres for this command.")
 
 
 def cmd_check(_: argparse.Namespace) -> int:
@@ -92,6 +93,41 @@ def cmd_copy_sqlite(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_deploy_check(_: argparse.Namespace) -> int:
+    """Build step for serverless deployments (Vercel): migrate, then make sure the reference
+    data is in the database. Loading it needs pyarrow, which is not installed there to stay
+    under the bundle size limit, so it is done once from a workstation (see README)."""
+    import os
+
+    from alembic import command
+
+    from app.db import alembic_config
+    from app.models.reference import college
+
+    _require_postgres()
+    if os.environ.get("SRT_MIGRATE_ON_BUILD", "1").lower() in {"0", "false", "no"}:
+        print("SRT_MIGRATE_ON_BUILD is off: migrations skipped.")
+    else:
+        command.upgrade(alembic_config(), "head")
+        print("Schema is up to date.")
+
+    current, head = migration_status(engine)
+    if current != head:
+        print(f"Schema at {current}, code needs {head}: run `alembic upgrade head`.", file=sys.stderr)
+        return 1
+    with engine.connect() as conn:
+        schools = conn.execute(select(func.count()).select_from(college)).scalar_one()
+    if not schools:
+        print(
+            "The reference tables are empty: run `python -m app.manage load-reference` "
+            "against this database from a workstation, then redeploy.",
+            file=sys.stderr,
+        )
+        return 1
+    print(f"Reference data present: {schools} schools.")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m app.manage")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -105,6 +141,8 @@ def main(argv: list[str] | None = None) -> int:
         help="SQLite file (default: tracker.db)",
     )
     c.set_defaults(func=cmd_copy_sqlite)
+    deploy = sub.add_parser("deploy-check", help="Migrate and verify the database (Vercel build step)")
+    deploy.set_defaults(func=cmd_deploy_check)
     args = parser.parse_args(argv)
     return args.func(args)
 

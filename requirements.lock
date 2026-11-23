@@ -1,4 +1,4 @@
-# Generated from pyproject.toml with pip freeze (runtime only). Do not edit by hand.
+# Generated from pyproject.toml (runtime + "parquet" extra) with pip freeze. Do not edit by hand.
 alembic==1.20.1
 annotated-doc==0.0.7
 annotated-types==0.8.0

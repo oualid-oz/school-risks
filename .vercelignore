@@ -1,0 +1,14 @@
+# Never upload local secrets, databases or pipeline outputs with `vercel deploy`.
+.venv
+.env
+.env.*
+!.env.example
+*.db
+__pycache__
+.pytest_cache
+.ruff_cache
+.vscode
+data/raw
+data/staging
+data/archive
+backups
