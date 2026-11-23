@@ -105,6 +105,8 @@ def cmd_deploy_check(_: argparse.Namespace) -> int:
     from app.models.reference import college
 
     _require_postgres()
+    # Messages go to stdout and stderr: flush each line so build logs keep their order.
+    sys.stdout.reconfigure(line_buffering=True)
     if os.environ.get("SRT_MIGRATE_ON_BUILD", "1").lower() in {"0", "false", "no"}:
         print("SRT_MIGRATE_ON_BUILD is off: migrations skipped.")
     else:
