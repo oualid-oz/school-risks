@@ -70,6 +70,7 @@ def configure_logging(fmt: str = "text", level: str = "INFO") -> None:
     # Requests are logged by RequestLogMiddleware, with timing and the request id.
     logging.getLogger("uvicorn.access").disabled = True
     logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("alembic").setLevel(logging.WARNING)  # readiness checks read migrations
 
 
 class RequestLogMiddleware:

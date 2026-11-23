@@ -88,11 +88,15 @@ services:
         condition: service_completed_successfully
       redis:
         condition: service_healthy
+    # Non-root user (in the image), read-only filesystem, no Linux capabilities.
+    # `security_opt: no-new-privileges` would be good too, but the snap-packaged Docker
+    # refuses to exec anything with it ("operation not permitted"); add it on servers
+    # running Docker from the official packages.
     read_only: true
     tmpfs:
       - /tmp
-    security_opt:
-      - no-new-privileges:true
+    cap_drop:
+      - ALL
     logging: *logging
 
   backup:

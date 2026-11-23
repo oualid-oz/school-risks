@@ -30,4 +30,6 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
     CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready', timeout=4)"]
 # WEB_CONCURRENCY sets the number of worker processes. Access logs come from the app
 # (one JSON line per request with its request id), so uvicorn's own are turned off.
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--no-access-log"]
+# The log config makes uvicorn's supervisor process log JSON too.
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--no-access-log", \
+     "--log-config", "app/core/uvicorn_log.json"]
