@@ -115,6 +115,10 @@ services:
     command: ["sh", "-c", "while true; do python -m app.manage send-digests; sleep 3600; done"]
     environment:
       <<: *app-env
+    # The image's HEALTHCHECK probes the API on :8000, which this container does not run.
+    # Without this, it is always "unhealthy" and `docker compose up --wait` fails.
+    healthcheck:
+      disable: true
     depends_on:
       migrate:
         condition: service_completed_successfully

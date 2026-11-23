@@ -9,7 +9,7 @@ from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
-from app.api.routes import actions, auth, colleges, health, internal, ppms, secteurs, stats
+from app.api.routes import actions, auth, colleges, exports, health, internal, ppms, secteurs, stats
 from app.core.config import settings
 from app.core.logging import RequestLogMiddleware, configure_logging
 from app.core.security import bootstrap_admin, validate_security_settings
@@ -64,7 +64,7 @@ if settings.trusted_proxies:
 
 for r in (
     auth.router, colleges.router, ppms.router, secteurs.router, actions.router, stats.router,
-    internal.router,
+    exports.router, internal.router,
 ):
     app.include_router(r, prefix=settings.api_prefix)
 app.include_router(health.router)

@@ -77,7 +77,7 @@ There is no persistent disk there, so it needs an external **Postgres with PostG
    python -m app.manage copy-sqlite           # from tracker.db
    ```
 3. Project environment variables in Vercel: `SRT_JWT_SECRET_KEY`, `SRT_BOOTSTRAP_ADMIN_USERNAME` / `SRT_BOOTSTRAP_ADMIN_PASSWORD`, and `DATABASE_URL` (the pooled URL is fine). Recommended: `SRT_RATE_LIMIT_STORAGE_URI=rediss://…` (Upstash Redis), otherwise each function instance counts requests on its own.
-4. Push: Vercel installs `pyproject.toml` (without the `parquet` and `dev` extras: ~285 MB of the 500 MB limit), then runs `python -m app.manage deploy-check`. That runs `alembic upgrade head` and, when the reference tables are empty (new database, or a fresh Neon branch for a preview), loads `data/*.parquet` into them (with fastparquet, as pyarrow is not installed there).
+4. Push: Vercel installs `pyproject.toml` (without the `parquet` and `dev` extras: ~340 MB of the 500 MB limit), then runs `python -m app.manage deploy-check`. That runs `alembic upgrade head` and, when the reference tables are empty (new database, or a fresh Neon branch for a preview), loads `data/*.parquet` into them (with fastparquet, as pyarrow is not installed there).
 
 **What the app does by itself on Vercel** (`VERCEL=1`; any value you set explicitly wins):
 - refuses to start on SQLite (read-only filesystem);
@@ -218,6 +218,9 @@ tests/                   # pytest + TestClient, in-memory SQLite
 | GET | `/colleges/{uai}/ppms` | PPMS status (computed), plan updates and drills |
 | POST/DELETE | `/colleges/{uai}/ppms/revisions[/{id}]` | Record or remove a PPMS update (admin, referent of the school) |
 | POST/DELETE | `/colleges/{uai}/ppms/exercices[/{id}]` | Record or remove a drill: `risques_majeurs`, `intrusion`, `incendie` |
+| GET | `/exports/colleges.csv?…` | Schools as CSV for Excel (same filters and order as `/colleges`, plus each hazard's score) |
+| GET | `/exports/actions.csv?…` | Actions as CSV for Excel (same filters and access as `/actions`) |
+| GET | `/colleges/{uai}/fiche.pdf` | One-page PDF "fiche risques" of a school |
 | PATCH | `/auth/me` | Own account: `email`, `alertes_email` (weekly digest opt-in; admins and referents) |
 | GET/POST | `/actions` | List actions (filter by `uai`, `alea`, `statut`, `priorite`, `en_retard`) or create one |
 | GET/PATCH/DELETE | `/actions/{id}` | Read, update or delete one action |
@@ -262,6 +265,12 @@ No open dataset lists the PPMS (safety plans), so referents record them in the a
 The school year starts on 1 September. Fire drills are recorded but do not count by default, because they follow separate fire-safety rules.
 The reasons appear in the school's risk-profile alerts, like the DICRIM alert. The dashboard shows how many schools are up to date, and `GET /colleges?ppms=` filters by status.
 ⚠️ These rules are a starting point: confirm them with whoever is responsible for safety plans, then adjust the three settings.
+
+### Exports
+
+- **CSV** (dashboard "Exporter (CSV)", school page "Actions (CSV)"): made for French Excel, with `;` as separator, decimal commas, dd/mm/yyyy dates and a UTF-8 BOM. Text cells starting with `=`, `+`, `-` or `@` get a leading `'`, so a spreadsheet never runs user-typed text as a formula.
+- **PDF** (school page "Fiche PDF"): identity, score and score per hazard, reference data, alerts (with PPMS), PPMS status, open actions (25 listed, then a count) and the yearly score snapshots. It is built with fpdf2 (pure Python, works on Vercel) and DejaVu Sans, bundled in `app/assets/fonts` (license alongside), so any character typed by users prints. Characters missing from the font (emoji) are skipped.
+- **Access** follows the actions: referents export their own schools only (403 for another school's fiche or actions). Admins and readers export everything. Every export is in the audit log, and responses are sent with `Cache-Control: no-store`.
 
 ### Email alerts (weekly digest)
 
@@ -315,7 +324,7 @@ Order: Sprint 8 is small and changes how priorities are read. Sprint 9 creates t
 - A `notification_log` table makes every run idempotent: running twice in the same week sends nothing twice.
 - **Done when:** a referent receives the digest in a real inbox, a second run sends nothing, and the whole run fits in the Vercel function time limit. Tested against a local SMTP server, including the second run sending nothing; **still to do:** configure a real provider and check a real inbox.
 
-### ⏭ Sprint 11: Exports (CSV and PDF)
+### ✅ Sprint 11: Exports (CSV and PDF)
 - CSV: the list of schools with their scores (same filters as the API) and the list of actions. Referents only export their own schools. The files open correctly in French Excel (UTF-8 with BOM, `;` separator).
 - PDF "fiche risques" per school: identity, score per hazard, alerts, PPMS status, open actions and score history. Built with **fpdf2** (pure Python, works on Vercel; WeasyPrint needs system libraries Vercel does not have).
 - Download buttons on the school page and the dashboard. Exports are written to the audit log.

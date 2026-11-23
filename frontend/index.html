@@ -98,9 +98,12 @@
               <div><p class="eyebrow">À SURVEILLER</p><h2>Collèges prioritaires</h2></div>
               <span id="school-count" class="count-pill">—</span>
             </div>
-            <div class="ranking-toggle" role="group" aria-label="Classer les collèges">
-              <button type="button" data-ranking="score" aria-pressed="true">Score de risque</button>
-              <button type="button" data-ranking="priorite" aria-pressed="false">Élèves exposés</button>
+            <div class="list-tools">
+              <div class="ranking-toggle" role="group" aria-label="Classer les collèges">
+                <button type="button" data-ranking="score" aria-pressed="true">Score de risque</button>
+                <button type="button" data-ranking="priorite" aria-pressed="false">Élèves exposés</button>
+              </div>
+              <button id="export-list" type="button" hidden></button>
             </div>
             <p id="ranking-caption" class="panel-caption">Classés selon leur score global de risque.</p>
             <div id="school-list" class="school-list" aria-live="polite"></div>

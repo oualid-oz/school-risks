@@ -12,6 +12,8 @@ cramjam==2.14.0
 Deprecated==3.0.1
 fastapi==0.165.0
 fastparquet==2026.9.0
+fonttools==4.68.0
+fpdf2==2.9.0
 fsspec==2026.9.0
 GeoAlchemy2==0.21.0
 h11==0.16.0
@@ -26,6 +28,7 @@ numpy==2.5.5
 opentelemetry-api==1.45.2
 packaging==26.3
 pandas==3.1.1
+pillow==13.0.0
 psycopg==3.3.9
 psycopg-binary==3.3.9
 pwdlib==0.4.2
