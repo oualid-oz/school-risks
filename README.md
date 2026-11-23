@@ -13,7 +13,7 @@ It also tracks the follow-up actions taken for each school.
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
-pip install -e ".[dev]" -c requirements.lock   # app + pytest + ruff, tested versions
+pip install -e ".[dev]" -c requirements.lock   # app + pyarrow + pytest + ruff, tested versions
 uvicorn app.main:app --reload
 ```
 
@@ -62,6 +62,33 @@ Image tag and `/health` version: `BUILD_VERSION=$(git describe --always) docker 
 To refresh the reference data: run the pipeline on a workstation, commit the new `data/*.parquet`, rebuild and redeploy (`migrate` reloads them).
 Yearly snapshot inside the stack: `docker compose run --rm api python -m app.pipeline snapshot`.
 
+## Deploying to Vercel
+
+Vercel runs the API as a serverless Python function (`[tool.vercel]` in `pyproject.toml`, `vercel.json`).
+There is no persistent disk there, so it needs an external **Postgres with PostGIS** (Neon, Supabase, …), and the Docker services (`backup`, `redis`, `migrate`) do not exist.
+
+**One-time setup**
+1. Create the database, for example with the Neon integration in the Vercel dashboard (it sets `DATABASE_URL`; Neon supports PostGIS).
+2. From your machine, against that database (use its direct, non-pooled URL):
+   ```bash
+   export SRT_DATABASE_URL='postgresql://…'   # postgres:// URLs are accepted as is
+   alembic upgrade head
+   python -m app.manage load-reference        # needs pyarrow, which Vercel does not install
+   python -m app.manage copy-sqlite           # optional: users, actions, audit log from tracker.db
+   ```
+3. Project environment variables in Vercel: `SRT_JWT_SECRET_KEY`, `SRT_BOOTSTRAP_ADMIN_USERNAME` / `SRT_BOOTSTRAP_ADMIN_PASSWORD`, and `DATABASE_URL` (the pooled URL is fine). Recommended: `SRT_RATE_LIMIT_STORAGE_URI=rediss://…` (Upstash Redis), otherwise each function instance counts requests on its own.
+4. Push: Vercel installs `pyproject.toml` (without the `parquet` and `dev` extras: ~270 MB of the 500 MB limit), then runs `python -m app.manage deploy-check`. That runs `alembic upgrade head` and fails the build if the reference tables are empty.
+
+**What the app does by itself on Vercel** (`VERCEL=1`; any value you set explicitly wins):
+- refuses to start on SQLite (read-only filesystem);
+- trusts `X-Forwarded-For` (`SRT_TRUSTED_PROXIES=["*"]`): Vercel's edge overwrites it with the real client IP;
+- logs JSON, and `/health` reports the commit (`VERCEL_GIT_COMMIT_SHA`);
+- connects without server-side prepared statements, so a transaction-mode pooler (Neon `-pooler` host, PgBouncer) works.
+
+**Preview deployments** run the same build step: give them their own database (Neon creates a branch per preview), or set `SRT_MIGRATE_ON_BUILD=0` for the Preview environment so a preview never migrates the production schema.
+**Data refresh:** run the pipeline on your machine with `SRT_DATABASE_URL` pointing to the production database: `build --publish` reloads the PostGIS tables. New function instances pick the data up; redeploy to refresh the running ones.
+**Backups:** use the provider's (Neon keeps a point-in-time history), or `pg_dump` from your machine.
+
 ### Monitoring
 
 - `GET /health`: liveness (process up) and version.
@@ -91,12 +118,12 @@ Locally: `pip install -e ".[dev]" -c requirements.lock`, then `ruff check .` and
 
 ### Dependencies
 
-- `pyproject.toml` declares them: `[project] dependencies` (runtime, minimum versions) and the `dev` extra (pytest, ruff).
+- `pyproject.toml` declares them: `[project] dependencies` (what the API needs when it reads PostGIS), the `parquet` extra (pyarrow: SQLite mode, data pipeline, `load-reference`) and the `dev` extra (parquet + pytest + ruff).
 - `requirements.lock` pins the exact runtime versions that were tested. Docker installs only from it, CI uses it as constraints.
 - After adding or upgrading a dependency in `pyproject.toml`, regenerate the lock in a clean virtualenv:
 
 ```bash
-python -m venv /tmp/lockenv && /tmp/lockenv/bin/pip install .
+python -m venv /tmp/lockenv && /tmp/lockenv/bin/pip install ".[parquet]"   # Docker needs pyarrow
 ( echo "# Generated from pyproject.toml with pip freeze (runtime only). Do not edit by hand."
   /tmp/lockenv/bin/pip freeze --exclude school-risk-tracker ) > requirements.lock
 ```
@@ -162,7 +189,8 @@ app/
 │   ├── snapshots.py     # score_snapshot table
 │   └── reference.py     # PostGIS tables: college, college_annee, secteur
 migrations/              # Alembic (Postgres schema)
-pyproject.toml           # dependencies + ruff / pytest settings
+pyproject.toml           # dependencies, Vercel entrypoint + build step, ruff / pytest settings
+vercel.json              # Vercel function settings (duration, excluded files)
 requirements.lock        # exact tested versions (Docker, CI)
 └── api/routes/
     ├── colleges.py      # /colleges, /colleges/{uai}, /risques, /historique

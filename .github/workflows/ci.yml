@@ -61,15 +61,17 @@ jobs:
   docker:
     needs: [lint, test]
     runs-on: ubuntu-latest
+    # Job level, not step level: every `docker compose` command (exec, logs, down too)
+    # reads the whole compose file and needs the required variables.
+    env:
+      BUILD_VERSION: ci-${{ github.sha }}
+      SRT_DB_PASSWORD: ci-password
+      SRT_JWT_SECRET_KEY: ci-only-signing-key-that-is-long-enough-for-hs256
+      SRT_BOOTSTRAP_ADMIN_USERNAME: ci-admin
+      SRT_BOOTSTRAP_ADMIN_PASSWORD: ci-admin-password
     steps:
       - uses: actions/checkout@v4
       - name: Start the whole stack
-        env:
-          BUILD_VERSION: ci-${{ github.sha }}
-          SRT_DB_PASSWORD: ci-password
-          SRT_JWT_SECRET_KEY: ci-only-signing-key-that-is-long-enough-for-hs256
-          SRT_BOOTSTRAP_ADMIN_USERNAME: ci-admin
-          SRT_BOOTSTRAP_ADMIN_PASSWORD: ci-admin-password
         run: |
           chmod 777 backups
           docker compose up -d --build --wait --wait-timeout 180

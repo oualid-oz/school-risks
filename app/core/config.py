@@ -1,7 +1,8 @@
 """Application settings, overridable through environment variables or a .env file."""
+import os
 from pathlib import Path
 
-from pydantic import field_validator
+from pydantic import AliasChoices, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -19,8 +20,12 @@ class Settings(BaseSettings):
     risques_file: str = "colleges_risques.parquet"
     secteurs_file: str = "colleges_secteurs.geojson"
 
-    # Tracking database (actions / follow-ups). SQLite by default, swap for Postgres later.
-    database_url: str = f"sqlite:///{BASE_DIR / 'tracker.db'}"
+    # SQLite by default (tests, quick local runs); Postgres + PostGIS in production.
+    # DATABASE_URL is accepted too: it is what hosting integrations such as Neon on Vercel set.
+    database_url: str = Field(
+        default=f"sqlite:///{BASE_DIR / 'tracker.db'}",
+        validation_alias=AliasChoices("SRT_DATABASE_URL", "DATABASE_URL"),
+    )
 
     # Authentication and browser access.
     jwt_secret_key: str = ""
@@ -36,6 +41,15 @@ class Settings(BaseSettings):
     # IPs of reverse proxies allowed to set X-Forwarded-For / X-Forwarded-Proto.
     # Leave empty when the API is exposed directly.
     trusted_proxies: list[str] = []
+
+    @field_validator("database_url")
+    @classmethod
+    def _psycopg_driver(cls, url: str) -> str:
+        # Providers hand out postgres:// or postgresql:// URLs; SQLAlchemy needs the driver.
+        for prefix in ("postgres://", "postgresql://"):
+            if url.startswith(prefix):
+                return "postgresql+psycopg://" + url.removeprefix(prefix)
+        return url
 
     @field_validator("bootstrap_admin_username", "bootstrap_admin_password", mode="before")
     @classmethod
@@ -59,6 +73,26 @@ class Settings(BaseSettings):
 
     # A DICRIM older than this (years) is flagged as outdated.
     dicrim_max_age_years: int = 10
+
+    @property
+    def on_vercel(self) -> bool:
+        return os.environ.get("VERCEL") == "1"
+
+    @model_validator(mode="after")
+    def _vercel_defaults(self) -> "Settings":
+        """Defaults for Vercel; any value set explicitly still wins."""
+        if not self.on_vercel:
+            return self
+        if "trusted_proxies" not in self.model_fields_set:
+            # Vercel's edge overwrites X-Forwarded-For with the real client IP, so it can be
+            # trusted from any peer: rate limits and the audit log then see real clients.
+            self.trusted_proxies = ["*"]
+        if "log_format" not in self.model_fields_set:
+            self.log_format = "json"
+        sha = os.environ.get("VERCEL_GIT_COMMIT_SHA")
+        if "build_version" not in self.model_fields_set and sha:
+            self.build_version = sha[:7]
+        return self
 
 
 settings = Settings()

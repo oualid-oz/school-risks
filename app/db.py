@@ -16,7 +16,11 @@ def is_postgres(url: str | None = None) -> bool:
 def make_engine(url: str):
     if url.startswith("sqlite"):
         return create_engine(url, connect_args={"check_same_thread": False})
-    return create_engine(url, pool_pre_ping=True)
+    # prepare_threshold=None: no server-side prepared statements, so the URL may point to a
+    # transaction-mode connection pooler (PgBouncer, Neon's "-pooler" host).
+    return create_engine(
+        url, pool_pre_ping=True, pool_recycle=300, connect_args={"prepare_threshold": None}
+    )
 
 
 engine = make_engine(settings.database_url)
@@ -51,6 +55,11 @@ def init_db() -> None:
     """SQLite: create missing tables. Postgres: the schema is owned by Alembic, so only
     check that it is up to date (run `alembic upgrade head` after pulling new code)."""
     register_models()
+    if settings.on_vercel and not is_postgres():
+        raise RuntimeError(
+            "Vercel has a read-only filesystem: set DATABASE_URL (or SRT_DATABASE_URL) "
+            "to a Postgres + PostGIS database."
+        )
     if not is_postgres():
         SQLModel.metadata.create_all(engine)
         return
