@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="theme-color" content="#f5f7f4">
     <title>Risques scolaires | Loiret</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml">
     <link rel="preconnect" href="https://unpkg.com">
     <link rel="preconnect" href="https://tile.openstreetmap.org">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
@@ -13,15 +14,30 @@
   <body>
     <header class="topbar">
       <a class="brand" href="#dashboard" aria-label="Tableau de bord">
-        <span class="brand-mark" aria-hidden="true">R</span>
+        <img class="brand-mark" src="/favicon.svg" alt="" width="40" height="40">
         <span><strong>Risques scolaires</strong><small>Observatoire du Loiret</small></span>
       </a>
       <span class="data-badge"><span class="live-dot"></span> Données de référence</span>
       <div id="account-controls" class="account-controls" hidden>
         <span id="account-name"></span>
+        <button id="alerts-button" type="button" hidden>Alertes e-mail</button>
         <button id="logout-button" type="button">Déconnexion</button>
       </div>
     </header>
+
+    <dialog id="alerts-dialog" class="alerts-dialog" aria-labelledby="alerts-title">
+      <form id="alerts-form" method="dialog">
+        <h2 id="alerts-title">Alertes e-mail</h2>
+        <p class="muted small">Un point chaque lundi : actions en retard ou à échéance dans les 7 jours, PPMS à mettre à jour. Rien n’est envoyé les semaines sans élément.</p>
+        <label class="ppms-field"><span>Adresse e-mail</span><input id="alerts-email" type="email" maxlength="254" autocomplete="email"></label>
+        <label class="alerts-check"><input id="alerts-enabled" type="checkbox"> Recevoir le point hebdomadaire</label>
+        <p id="alerts-error" class="ppms-error" role="alert" hidden></p>
+        <div class="alerts-buttons">
+          <button type="button" id="alerts-cancel">Annuler</button>
+          <button type="submit" id="alerts-save" class="primary">Enregistrer</button>
+        </div>
+      </form>
+    </dialog>
 
     <main>
       <section id="login-screen" class="view login-view">
@@ -82,9 +98,12 @@
               <div><p class="eyebrow">À SURVEILLER</p><h2>Collèges prioritaires</h2></div>
               <span id="school-count" class="count-pill">—</span>
             </div>
-            <div class="ranking-toggle" role="group" aria-label="Classer les collèges">
-              <button type="button" data-ranking="score" aria-pressed="true">Score de risque</button>
-              <button type="button" data-ranking="priorite" aria-pressed="false">Élèves exposés</button>
+            <div class="list-tools">
+              <div class="ranking-toggle" role="group" aria-label="Classer les collèges">
+                <button type="button" data-ranking="score" aria-pressed="true">Score de risque</button>
+                <button type="button" data-ranking="priorite" aria-pressed="false">Élèves exposés</button>
+              </div>
+              <button id="export-list" type="button" hidden></button>
             </div>
             <p id="ranking-caption" class="panel-caption">Classés selon leur score global de risque.</p>
             <div id="school-list" class="school-list" aria-live="polite"></div>

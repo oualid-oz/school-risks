@@ -21,6 +21,7 @@ from app.db import get_session
 from app.models.security import (
     AuditLog,
     AuditLogRead,
+    MyAccountUpdate,
     TokenRead,
     User,
     UserCollegeLink,
@@ -45,8 +46,22 @@ def _user_read(session: Session, user: User) -> UserRead:
         role=user.role,
         active=user.active,
         school_uais=sorted(assigned_schools(session, user)),
+        email=user.email,
+        alertes_email=user.alertes_email,
         created_at=user.created_at,
     )
+
+
+def _check_alert_settings(role: UserRole, email: str | None, alertes_email: bool) -> None:
+    if not alertes_email:
+        return
+    if role == UserRole.lecteur:
+        raise HTTPException(
+            status_code=422,
+            detail="Les alertes e-mail sont réservées aux administrateurs et aux référents",
+        )
+    if not email:
+        raise HTTPException(status_code=422, detail="Renseignez une adresse e-mail pour recevoir les alertes")
 
 
 def _validate_school_assignments(
@@ -106,6 +121,33 @@ def read_current_user(
     return _user_read(session, user)
 
 
+@router.patch("/me", response_model=UserRead)
+@limiter.limit(settings.rate_limit_default)
+def update_current_user(
+    payload: MyAccountUpdate,
+    request: Request,
+    user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    """Users manage their own email address and weekly-digest opt-in."""
+    changes = payload.model_dump(exclude_unset=True)
+    email = changes.get("email", user.email)
+    requested = changes.get("alertes_email")
+    alertes = user.alertes_email if requested is None else requested
+    if email is None and requested is None:
+        alertes = False  # address removed: alerts stop (asking for alerts without one is refused)
+    _check_alert_settings(user.role, email, alertes)
+    user.email, user.alertes_email = email, alertes
+    record_audit(
+        session, request, user, "user.self_updated", "user", user.id,
+        {"updated_fields": sorted(changes), "alertes_email": alertes},
+    )
+    session.add(user)
+    session.commit()
+    session.refresh(user)
+    return _user_read(session, user)
+
+
 @router.get("/users", response_model=list[UserRead])
 @limiter.limit(settings.rate_limit_default)
 def list_users(
@@ -133,7 +175,10 @@ def create_user(
         username=payload.username,
         hashed_password=hash_password(payload.password),
         role=payload.role,
+        email=payload.email,
+        alertes_email=payload.alertes_email,
     )
+    _check_alert_settings(user.role, user.email, user.alertes_email)
     session.add(user)
     try:
         session.flush()
@@ -204,6 +249,13 @@ def update_user(
         user.role = new_role
     if "active" in changes:
         user.active = new_active
+    if "email" in changes:
+        user.email = changes["email"]
+    if "alertes_email" in changes and changes["alertes_email"] is not None:
+        user.alertes_email = changes["alertes_email"]
+    if user.role == UserRole.lecteur:
+        user.alertes_email = False  # readers get no digest
+    _check_alert_settings(user.role, user.email, user.alertes_email)
     record_audit(
         session,
         request,

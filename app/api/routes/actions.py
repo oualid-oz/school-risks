@@ -55,6 +55,20 @@ def list_actions(
     session: Session = Depends(get_session),
     user: User = Depends(get_current_user),
 ):
+    return find_actions(session, user, uai, alea, statut, priorite, en_retard)
+
+
+def find_actions(
+    session: Session,
+    user: User,
+    uai: str | None = None,
+    alea: Alea | None = None,
+    statut: Statut | None = None,
+    priorite: Priorite | None = None,
+    en_retard: bool | None = None,
+) -> list[ActionRead]:
+    """Actions visible to `user` (referents: their schools only), oldest due date first.
+    Shared by the list and the CSV export so both apply the same access rules."""
     stmt = select(Action)
     if user.role == UserRole.referent:
         school_uais = assigned_schools(session, user)

@@ -12,8 +12,9 @@ from fastapi.security import OAuth2PasswordBearer
 from pwdlib import PasswordHash
 from sqlmodel import Session, select
 
+from app import db
 from app.core.config import settings
-from app.db import engine, get_session
+from app.db import get_session
 from app.models.security import AuditLog, User, UserCollegeLink, UserRole
 
 logger = logging.getLogger(__name__)
@@ -153,7 +154,8 @@ def bootstrap_admin() -> None:
         )
         return
 
-    with Session(engine) as session:
+    # db.engine, looked up now: tests and tools swap the engine after import.
+    with Session(db.engine) as session:
         existing = session.exec(select(User).where(User.username == username)).first()
         if existing:
             return

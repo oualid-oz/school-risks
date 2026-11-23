@@ -73,6 +73,50 @@ function getJson(path) {
   return apiRequest(path);
 }
 
+// Exports need the Authorization header, so a plain <a href> cannot be used: fetch the
+// file, then hand it to the browser as a download.
+async function downloadFile(path, button) {
+  const original = button.textContent;
+  button.disabled = true;
+  button.textContent = "Préparation…";
+  try {
+    const response = await fetch(`${API}${path}`, { headers: { Authorization: `Bearer ${accessToken}` } });
+    if (response.status === 401) {
+      accessToken = null;
+      showLogin("Votre session a expiré. Veuillez vous reconnecter.");
+      return;
+    }
+    if (!response.ok) {
+      let message = `Erreur ${response.status}`;
+      try { message = (await response.json()).detail || message; } catch { /* not JSON */ }
+      throw new Error(message);
+    }
+    const disposition = response.headers.get("Content-Disposition") || "";
+    const filename = disposition.match(/filename="([^"]+)"/)?.[1] || "export";
+    const url = URL.createObjectURL(await response.blob());
+    const link = element("a");
+    link.href = url;
+    link.download = filename;
+    document.body.append(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  } catch (error) {
+    window.alert(`Export impossible : ${error.message}`);
+  } finally {
+    button.disabled = false;
+    button.textContent = original;
+  }
+}
+
+function exportButton(labelText, path, title) {
+  const button = element("button", "export-button", labelText);
+  button.type = "button";
+  if (title) button.title = title;
+  button.addEventListener("click", () => downloadFile(typeof path === "function" ? path() : path, button));
+  return button;
+}
+
 function element(tag, className, value) {
   const node = document.createElement(tag);
   if (className) node.className = className;
@@ -98,6 +142,8 @@ function showLogin(message = "") {
 
 function showAccount(user) {
   currentUser = user;
+  // Digests are for admins and referents (the API refuses them for readers).
+  document.getElementById("alerts-button").hidden = !["admin", "referent"].includes(user.role);
   document.getElementById("login-screen").hidden = true;
   document.getElementById("account-controls").hidden = false;
   document.getElementById("account-name").textContent = `${user.username} · ${user.role}`;
@@ -421,6 +467,13 @@ function renderSchool(school, actions, history, ppms) {
     element("span", "meta-chip", `Secteur ${text(school.secteur_id)}`)
   );
   heading.append(metadata);
+  const uaiParam = encodeURIComponent(school.uai);
+  const exportsBar = element("div", "export-bar");
+  exportsBar.append(
+    exportButton("Fiche PDF", `/colleges/${uaiParam}/fiche.pdf`, "Fiche risques à imprimer ou à joindre"),
+    exportButton("Actions (CSV)", `/exports/actions.csv?uai=${uaiParam}`, "Actions de suivi, pour Excel")
+  );
+  heading.append(exportsBar);
   const score = element("div", `school-score-card ${riskClass(profile.score_global)}`);
   score.append(
     element("small", "", "Score global"),
@@ -658,6 +711,39 @@ function ppmsPanel(uai, ppms) {
   return panel;
 }
 
+// ---- Email alerts (own account) -------------------------------------------------------
+function setupAlertsDialog() {
+  const dialog = document.getElementById("alerts-dialog");
+  const email = document.getElementById("alerts-email");
+  const enabled = document.getElementById("alerts-enabled");
+  const error = document.getElementById("alerts-error");
+  const save = document.getElementById("alerts-save");
+  document.getElementById("alerts-button").addEventListener("click", () => {
+    email.value = currentUser?.email || "";
+    enabled.checked = Boolean(currentUser?.alertes_email);
+    error.hidden = true;
+    dialog.showModal();
+  });
+  document.getElementById("alerts-cancel").addEventListener("click", () => dialog.close());
+  document.getElementById("alerts-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    error.hidden = true;
+    save.disabled = true;
+    try {
+      currentUser = await apiRequest("/auth/me", {
+        method: "PATCH",
+        body: { email: email.value.trim() || null, alertes_email: enabled.checked },
+      });
+      dialog.close();
+    } catch (err) {
+      error.textContent = err.message;
+      error.hidden = false;
+    } finally {
+      save.disabled = false;
+    }
+  });
+}
+
 async function openSchool(uai) {
   location.hash = `school/${encodeURIComponent(uai)}`;
 }
@@ -698,6 +784,13 @@ function route() {
 
 async function init() {
   document.getElementById("back-button").addEventListener("click", () => { location.hash = "dashboard"; });
+  setupAlertsDialog();
+  document.getElementById("export-list").replaceWith(
+    Object.assign(
+      exportButton("Exporter (CSV)", () => `/exports/colleges.csv?tri=${rankingMode}`, "Tous les collèges, dans l’ordre affiché, pour Excel"),
+      { id: "export-list" }
+    )
+  );
   document.querySelectorAll("[data-ranking]").forEach((button) => {
     button.addEventListener("click", () => setRankingMode(button.dataset.ranking));
   });

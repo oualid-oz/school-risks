@@ -82,6 +82,32 @@ class Settings(BaseSettings):
     ppms_exercices_comptes: list[str] = ["risques_majeurs", "intrusion"]
     ppms_delai_exercice_jours: int = 90
 
+    # Email digests (Sprint 10). mail_backend "log" writes the emails to the logs instead of
+    # sending them (default, safe for development); "smtp" sends them.
+    mail_backend: str = "log"
+    mail_from: str = "School Risk Tracker <no-reply@localhost>"
+    smtp_host: str | None = None
+    smtp_port: int = 587
+    smtp_security: str = "starttls"  # starttls | ssl | none
+    smtp_username: str | None = None
+    smtp_password: str | None = None
+    smtp_timeout_seconds: float = 10.0
+    # Base URL of the app, for the links in the emails.
+    public_url: str = "http://localhost:8000"
+    # Weekly digest: sent from this weekday (0 = Monday) and hour (UTC) on, once per ISO
+    # week and per person. A run that is cut short is finished by the next one.
+    digest_weekday: int = 0
+    digest_hour_utc: int = 6
+    digest_due_soon_days: int = 7
+    # Stop sending before the serverless time limit (Vercel: 30 s here); the rest goes out
+    # at the next run.
+    digest_time_budget_seconds: float = 20.0
+    # Protects the scheduler endpoint. Vercel Cron sends it as "Authorization: Bearer …"
+    # when the project has a CRON_SECRET variable.
+    cron_secret: str | None = Field(
+        default=None, validation_alias=AliasChoices("SRT_CRON_SECRET", "CRON_SECRET")
+    )
+
     @property
     def on_vercel(self) -> bool:
         return os.environ.get("VERCEL") == "1"

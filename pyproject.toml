@@ -24,6 +24,8 @@ dependencies = [
     # Reads data/*.parquet where pyarrow is not installed (Vercel's build step loads the
     # reference data with it): ~20 MB instead of ~170 MB. pandas prefers pyarrow if present.
     "fastparquet>=2024.2",
+    # PDF fiche per school (pure Python; with Pillow and fonttools, ~40 MB).
+    "fpdf2>=2.8",
 ]
 
 [project.optional-dependencies]
@@ -53,6 +55,7 @@ include = ["app*"]
 
 [tool.setuptools.package-data]
 "app.core" = ["*.json"]
+"app" = ["assets/fonts/*"]
 
 [tool.ruff]
 line-length = 110

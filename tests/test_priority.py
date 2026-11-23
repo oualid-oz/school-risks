@@ -1,7 +1,7 @@
 """Sprint 8: priority index = pupils exposed, weighted by risk."""
 import pytest
 
-from app.data.store import get_store
+from app.data.store import DataStore, get_store
 from app.services.scoring import EFFECTIF_INCONNU, compute_risk_profile, indice_priorite
 
 API = "/api/v1"
@@ -15,7 +15,7 @@ def test_index_formula_and_unknown_enrolment():
 
 
 def test_profile_flags_unknown_enrolment_without_touching_the_score():
-    store = get_store()
+    store = DataStore("files")  # no fixture here: never follow .env to a real database
     row = dict(store.get_college("0450003J"))
     known = compute_risk_profile(row)
     row["effectif_total"] = None

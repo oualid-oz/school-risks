@@ -24,13 +24,28 @@ button, input { font: inherit; }
 a { color: inherit; text-decoration: none; }
 .topbar { height: 72px; background: #fff; border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; padding: 0 max(28px, calc((100% - 1440px) / 2)); }
 .brand { display: flex; align-items: center; gap: 11px; }
-.brand-mark { width: 36px; height: 36px; display: grid; place-items: center; color: white; font: 800 17px Manrope, sans-serif; background: var(--green); border-radius: 11px; }
+.brand-mark { width: 40px; height: 40px; display: block; flex: none; }
 .brand strong, .brand small { display: block; }
 .brand strong { font: 700 14px Manrope, sans-serif; }
 .brand small { color: var(--muted); font-size: 11px; margin-top: 2px; }
 .data-badge { color: #54635a; font-size: 12px; background: #f4f7f4; border: 1px solid #e8ede8; padding: 8px 11px; border-radius: 20px; }
 .live-dot { display: inline-block; width: 7px; height: 7px; background: #53a477; border-radius: 50%; margin-right: 6px; }
 .account-controls { display: flex; align-items: center; gap: 12px; color: #536159; font-size: 11px; }
+.alerts-dialog { border: 1px solid var(--line); border-radius: 11px; padding: 20px; width: min(420px, calc(100vw - 32px)); box-shadow: var(--shadow); color: var(--ink); }
+.alerts-dialog::backdrop { background: rgb(23 35 30 / 35%); }
+.alerts-dialog form { display: grid; gap: 12px; }
+.alerts-dialog h2 { margin: 0; }
+.alerts-dialog p { margin: 0; }
+.alerts-check { display: flex; align-items: center; gap: 8px; font-size: 12px; color: #3f4c45; }
+.alerts-buttons { display: flex; justify-content: flex-end; gap: 8px; }
+.alerts-buttons button { border: 1px solid #e4e9e4; border-radius: 7px; background: white; color: var(--green); padding: 8px 12px; font-size: 11px; font-weight: 700; cursor: pointer; }
+.alerts-buttons .primary { background: var(--green); color: white; border-color: var(--green); }
+.export-bar { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.export-button { border: 1px solid #dfe8e1; border-radius: 7px; background: white; color: var(--green); padding: 7px 11px; font-size: 10px; font-weight: 700; cursor: pointer; }
+.export-button:hover { background: #f4f8f5; }
+.export-button:disabled { opacity: .6; cursor: wait; }
+.list-tools { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px; margin: 0 19px 9px; }
+.list-tools .ranking-toggle { margin: 0; }
 .account-controls button { border: 1px solid #e4e9e4; border-radius: 6px; background: white; color: var(--green); padding: 7px 9px; font-size: 10px; cursor: pointer; }
 main { max-width: 1440px; padding: 34px 32px 28px; margin: auto; min-height: calc(100vh - 128px); }
 .login-view { min-height: calc(100vh - 190px); display: grid; place-items: center; }

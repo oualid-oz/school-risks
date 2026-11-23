@@ -27,7 +27,13 @@ engine = make_engine(settings.database_url)
 
 
 def register_models() -> None:
-    from app.models import ppms, security, snapshots, tracking  # noqa: F401  (registers the tables)
+    from app.models import (  # noqa: F401  (registers the tables)
+        notifications,
+        ppms,
+        security,
+        snapshots,
+        tracking,
+    )
 
 
 def alembic_config(url: str | None = None):
@@ -84,12 +90,19 @@ def _add_missing_sqlite_columns() -> None:
             for column in table.columns:
                 if column.name in existing:
                     continue
-                if not column.nullable:
-                    raise RuntimeError(
-                        f"{table.name}.{column.name} is new and NOT NULL: recreate the SQLite "
-                        "database or use Postgres with Alembic."
-                    )
                 ddl = column.type.compile(dialect=engine.dialect)
+                if column.server_default is not None:
+                    default = column.server_default.arg
+                    if not isinstance(default, str):
+                        default = default.compile(
+                            dialect=engine.dialect, compile_kwargs={"literal_binds": True}
+                        )
+                    ddl += f" NOT NULL DEFAULT {default}" if not column.nullable else f" DEFAULT {default}"
+                elif not column.nullable:
+                    raise RuntimeError(
+                        f"{table.name}.{column.name} is new, NOT NULL and has no server default: "
+                        "recreate the SQLite database or use Postgres with Alembic."
+                    )
                 conn.execute(text(f'ALTER TABLE "{table.name}" ADD COLUMN "{column.name}" {ddl}'))
 
 

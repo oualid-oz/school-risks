@@ -4,6 +4,7 @@
     python -m app.manage load-reference                # data/*.parquet + GeoJSON -> PostGIS
     python -m app.manage copy-sqlite --from tracker.db # users, actions, audit log, snapshots
     python -m app.manage deploy-check                  # Vercel build step (see pyproject.toml)
+    python -m app.manage send-digests [--dry-run]      # weekly email digests (cron, idempotent)
 
 Run `alembic upgrade head` first on a new Postgres database.
 """
@@ -140,6 +141,23 @@ def cmd_deploy_check(_: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_send_digests(args: argparse.Namespace) -> int:
+    """Weekly email digests. Safe to run hourly from cron: once per person and week."""
+    import json
+
+    from sqlmodel import Session
+
+    from app.data.store import get_store
+    from app.db import init_db
+    from app.services.digest import send_digests
+
+    init_db()
+    with Session(engine) as session:
+        result = send_digests(session, get_store(), force=args.force, dry_run=args.dry_run)
+    print(json.dumps(result))
+    return 1 if result["failed"] else 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m app.manage")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -155,6 +173,10 @@ def main(argv: list[str] | None = None) -> int:
     c.set_defaults(func=cmd_copy_sqlite)
     deploy = sub.add_parser("deploy-check", help="Migrate and verify the database (Vercel build step)")
     deploy.set_defaults(func=cmd_deploy_check)
+    digest = sub.add_parser("send-digests", help="Send this week's email digests (idempotent)")
+    digest.add_argument("--force", action="store_true", help="Send even before the configured weekday/hour")
+    digest.add_argument("--dry-run", action="store_true", help="Build the digests, log them, send nothing")
+    digest.set_defaults(func=cmd_send_digests)
     args = parser.parse_args(argv)
     return args.func(args)
 
