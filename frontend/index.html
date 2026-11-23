@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#f5f7f4">
+    <title>Risques scolaires | Loiret</title>
+    <link rel="preconnect" href="https://unpkg.com">
+    <link rel="preconnect" href="https://tile.openstreetmap.org">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="#dashboard" aria-label="Tableau de bord">
+        <span class="brand-mark" aria-hidden="true">R</span>
+        <span><strong>Risques scolaires</strong><small>Observatoire du Loiret</small></span>
+      </a>
+      <span class="data-badge"><span class="live-dot"></span> Données de référence</span>
+      <div id="account-controls" class="account-controls" hidden>
+        <span id="account-name"></span>
+        <button id="logout-button" type="button">Déconnexion</button>
+      </div>
+    </header>
+
+    <main>
+      <section id="login-screen" class="view login-view">
+        <form id="login-form" class="auth-card">
+          <p class="eyebrow">ACCÈS SÉCURISÉ</p>
+          <h1>Connexion</h1>
+          <p class="subheading">Connectez-vous pour accéder au tableau de bord des risques.</p>
+          <label for="username">Identifiant</label>
+          <input id="username" name="username" autocomplete="username" required>
+          <label for="password">Mot de passe</label>
+          <input id="password" name="password" type="password" autocomplete="current-password" required>
+          <p id="login-error" class="login-error" role="alert" hidden></p>
+          <button type="submit">Se connecter</button>
+        </form>
+      </section>
+
+      <section id="dashboard" class="view" hidden>
+        <div class="page-heading">
+          <div>
+            <p class="eyebrow">PILOTAGE TERRITORIAL</p>
+            <h1>Vue d’ensemble</h1>
+            <p class="subheading">Risques naturels et technologiques des collèges du Loiret.</p>
+          </div>
+          <label class="search-wrap">
+            <span class="search-icon" aria-hidden="true">⌕</span>
+            <input id="school-search" type="search" placeholder="Rechercher un collège…" autocomplete="off" aria-label="Rechercher un collège">
+            <span class="search-shortcut">/</span>
+            <div id="search-results" class="search-results" hidden></div>
+          </label>
+        </div>
+
+        <div id="dashboard-error" class="error-banner" role="alert" hidden></div>
+        <div id="stats-grid" class="stats-grid" aria-live="polite">
+          <article class="stat-card"><span class="stat-label">Collèges suivis</span><strong class="skeleton">—</strong><span class="stat-note">dans le département</span></article>
+          <article class="stat-card"><span class="stat-label">Élèves scolarisés</span><strong class="skeleton">—</strong><span class="stat-note">effectif de référence</span></article>
+          <article class="stat-card"><span class="stat-label">Risque élevé</span><strong class="skeleton">—</strong><span class="stat-note">score global ≥ 50</span></article>
+          <article class="stat-card"><span class="stat-label">Actions ouvertes</span><strong class="skeleton">—</strong><span class="stat-note">à faire ou en cours</span></article>
+        </div>
+
+        <div class="content-grid">
+          <section class="panel map-panel">
+            <div class="panel-heading">
+              <div><p class="eyebrow">CARTOGRAPHIE</p><h2>Secteurs et établissements</h2></div>
+              <span id="map-count" class="muted small">Chargement…</span>
+            </div>
+            <div id="map" role="application" aria-label="Carte des secteurs et collèges du Loiret"></div>
+            <div class="map-legend" aria-label="Légende des scores de risque">
+              <span><i class="legend-dot low"></i> Faible <small>0–29</small></span>
+              <span><i class="legend-dot medium"></i> Modéré <small>30–49</small></span>
+              <span><i class="legend-dot high"></i> Élevé <small>50–100</small></span>
+              <span><i class="legend-dot unknown"></i> Sans donnée</span>
+            </div>
+          </section>
+
+          <aside class="panel schools-panel">
+            <div class="panel-heading">
+              <div><p class="eyebrow">À SURVEILLER</p><h2>Collèges prioritaires</h2></div>
+              <span id="school-count" class="count-pill">—</span>
+            </div>
+            <p class="panel-caption">Classés selon leur score global de risque.</p>
+            <div id="school-list" class="school-list" aria-live="polite"></div>
+          </aside>
+        </div>
+        <p class="disclaimer">Les scores sont des indicateurs de priorisation et ne constituent pas une classification officielle.</p>
+      </section>
+
+      <section id="school-page" class="view school-view" hidden>
+        <button id="back-button" class="back-button" type="button"><span aria-hidden="true">←</span> Retour à la carte</button>
+        <div id="school-error" class="error-banner" role="alert" hidden></div>
+        <div id="school-content"></div>
+      </section>
+    </main>
+
+    <footer><span>School Risk Tracker</span><span>Sources : données de référence du projet · Fond cartographique © OpenStreetMap</span></footer>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+    <script src="/app.js" defer></script>
+  </body>
+</html>

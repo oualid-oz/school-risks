@@ -1,0 +1,17 @@
+.git
+.github
+.venv
+.env
+.env.*
+*.db
+__pycache__
+.pytest_cache
+.ruff_cache
+.vscode
+tests
+docs
+backups
+deploy
+data/raw
+data/staging
+data/archive

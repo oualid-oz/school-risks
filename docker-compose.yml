@@ -1,0 +1,116 @@
+# School Risk Tracker stack: PostGIS, Redis (rate limits), migrations, API, daily backups.
+#
+#   docker compose up -d --build        # whole stack (API on 127.0.0.1:8000 by default)
+#   docker compose up -d db             # only the database, for local development
+#
+# Variables come from .env (see .env.example). Required: SRT_DB_PASSWORD, SRT_JWT_SECRET_KEY.
+
+x-db-env: &db-env
+  PGHOST: db
+  PGUSER: srt
+  PGPASSWORD: ${SRT_DB_PASSWORD:?Set SRT_DB_PASSWORD in .env}
+  PGDATABASE: school_risks
+
+x-app-env: &app-env
+  SRT_DATABASE_URL: postgresql+psycopg://srt:${SRT_DB_PASSWORD}@db:5432/school_risks
+  SRT_JWT_SECRET_KEY: ${SRT_JWT_SECRET_KEY:?Set SRT_JWT_SECRET_KEY in .env}
+  SRT_BOOTSTRAP_ADMIN_USERNAME: ${SRT_BOOTSTRAP_ADMIN_USERNAME:-}
+  SRT_BOOTSTRAP_ADMIN_PASSWORD: ${SRT_BOOTSTRAP_ADMIN_PASSWORD:-}
+  SRT_CORS_ORIGINS: ${SRT_CORS_ORIGINS:-["http://localhost:8000","http://127.0.0.1:8000"]}
+  SRT_TRUSTED_PROXIES: ${SRT_TRUSTED_PROXIES:-[]}
+  SRT_RATE_LIMIT_STORAGE_URI: redis://redis:6379/0
+  SRT_LOG_LEVEL: ${SRT_LOG_LEVEL:-INFO}
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+services:
+  db:
+    image: postgis/postgis:17-3.5
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: school_risks
+      POSTGRES_USER: srt
+      POSTGRES_PASSWORD: ${SRT_DB_PASSWORD:?Set SRT_DB_PASSWORD in .env}
+    ports:
+      - "127.0.0.1:5433:5432"  # for local tools; 5432 is often taken by a local Postgres
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U srt -d school_risks"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    logging: *logging
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--save", "", "--appendonly", "no"]  # rate-limit counters only
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    logging: *logging
+
+  # One-shot: bring the schema up to date and (re)load the reference data shipped in the
+  # image. The API starts only if this succeeds.
+  migrate:
+    build:
+      context: .
+      args:
+        BUILD_VERSION: ${BUILD_VERSION:-dev}
+    image: school-risks-api:${BUILD_VERSION:-dev}
+    command: ["sh", "-c", "alembic upgrade head && python -m app.manage load-reference"]
+    environment:
+      <<: *app-env
+      SRT_LOG_FORMAT: text
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+    logging: *logging
+
+  api:
+    image: school-risks-api:${BUILD_VERSION:-dev}
+    restart: unless-stopped
+    environment:
+      <<: *app-env
+      WEB_CONCURRENCY: ${WEB_CONCURRENCY:-2}
+    ports:
+      - "${SRT_HTTP_BIND:-127.0.0.1}:${SRT_HTTP_PORT:-8000}:8000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    logging: *logging
+
+  backup:
+    image: postgis/postgis:17-3.5  # same image as db: pg_dump matches the server version
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "/backup.sh"]
+    user: "${BACKUP_UID:-1000}:${BACKUP_GID:-1000}"
+    environment:
+      <<: *db-env
+      BACKUP_INTERVAL_SECONDS: ${BACKUP_INTERVAL_SECONDS:-86400}
+      BACKUP_KEEP_DAYS: ${BACKUP_KEEP_DAYS:-14}
+    volumes:
+      - ./deploy/backup.sh:/backup.sh:ro
+      - ./backups:/backups
+    depends_on:
+      db:
+        condition: service_healthy
+    logging: *logging
+
+volumes:
+  pgdata:

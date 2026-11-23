@@ -1,0 +1,242 @@
+# School Risk Tracker (FastAPI)
+
+An API to track natural and technological risks for the **70 collèges in Loiret**.
+It also tracks the follow-up actions taken for each school.
+
+| Data file | Content |
+|---|---|
+| `data/colleges_risques.parquet` | 1 row per school: clay soils, flood plan (PPRI), cavities, ICPE/Seveso sites, hazardous-materials transport (TMD), nuclear plant, CatNat declarations, DICRIM year |
+| `data/colleges.parquet` | 10 school years (2016 → 2025): enrolment, IPS, DNB results |
+| `data/colleges_secteurs.geojson` | 59 catchment areas (sectors) as polygons |
+
+## Run it
+
+```bash
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements-dev.txt   # runtime + pytest + ruff
+uvicorn app.main:app --reload
+```
+
+Without `SRT_DATABASE_URL` the app uses SQLite (`tracker.db`) and reads the data files directly: fine for a quick look and for the tests.
+
+### With Postgres + PostGIS (recommended)
+
+```bash
+docker compose up -d db                     # PostGIS 17 on 127.0.0.1:5433
+echo 'SRT_DATABASE_URL=postgresql+psycopg://srt:srt-dev-password@127.0.0.1:5433/school_risks' >> .env
+alembic upgrade head                        # create / update the schema
+python -m app.manage load-reference         # data/*.parquet + sectors -> PostGIS
+python -m app.manage copy-sqlite            # optional: users, actions, audit log, snapshots from tracker.db
+uvicorn app.main:app --reload
+```
+
+On Postgres the schema belongs to Alembic: after pulling code with a new migration, run `alembic upgrade head` (the API refuses to start on an outdated schema; `python -m app.manage check` shows the revisions).
+To change a model, edit it and run `alembic revision --autogenerate -m "what changed"`, then review the generated file.
+
+Open http://127.0.0.1:8000/docs for the interactive Swagger UI.
+Open http://127.0.0.1:8000/ for the risk dashboard and sector map.
+To run the tests: `pytest -q`. The PostGIS tests run only when `SRT_TEST_DATABASE_URL` points to a disposable database (it is wiped):
+
+```bash
+psql -h 127.0.0.1 -p 5433 -U srt school_risks -c "CREATE DATABASE school_risks_test"
+SRT_TEST_DATABASE_URL=postgresql+psycopg://srt:srt-dev-password@127.0.0.1:5433/school_risks_test pytest -q
+```
+
+## Deployment (Docker)
+
+```bash
+cp .env.example .env        # set SRT_JWT_SECRET_KEY, SRT_DB_PASSWORD, and a first admin
+docker compose up -d --build
+```
+
+| Service | Role |
+|---|---|
+| `db` | PostGIS 17 (data in the `pgdata` volume) |
+| `redis` | Rate-limit counters, shared by all API workers |
+| `migrate` | One-shot: `alembic upgrade head`, then loads the reference data shipped in the image. The API starts only if it succeeds |
+| `api` | uvicorn, `WEB_CONCURRENCY` workers (default 2), non-root, read-only filesystem, published on `127.0.0.1:8000` |
+| `backup` | `pg_dump` at startup and then daily into `./backups`, keeps 14 days |
+
+The API port is bound to `127.0.0.1`: put a reverse proxy with TLS in front (Caddy, nginx, Traefik), add the public URL to `SRT_CORS_ORIGINS`, and the proxy's IP to `SRT_TRUSTED_PROXIES` so rate limits and the audit log see real client IPs.
+Image tag and `/health` version: `BUILD_VERSION=$(git describe --always) docker compose up -d --build`.
+To refresh the reference data: run the pipeline on a workstation, commit the new `data/*.parquet`, rebuild and redeploy (`migrate` reloads them).
+Yearly snapshot inside the stack: `docker compose run --rm api python -m app.pipeline snapshot`.
+
+### Monitoring
+
+- `GET /health`: liveness (process up) and version.
+- `GET /health/ready`: database reachable, schema up to date, reference data loaded. Answers 503 otherwise. Docker's `HEALTHCHECK` uses it, so `docker compose ps` shows `unhealthy`.
+- Logs: one JSON object per line on stdout (`SRT_LOG_FORMAT=json`, the default in the image; `text` locally). Every request is logged with `method`, `path`, `status`, `duration_ms`, `client` and a `request_id`, also returned in the `X-Request-ID` header (a proxy's own `X-Request-ID` is reused). Docker rotates logs at 5 × 10 MB per container.
+  `docker compose logs -f api | jq 'select(.status >= 500)'`
+
+### Backups and restore
+
+```bash
+docker compose exec backup /bin/sh /backup.sh once                        # backup now
+docker compose stop api
+docker compose exec backup /bin/sh /backup.sh restore /backups/school_risks_<stamp>.dump
+docker compose start api
+```
+
+Backups are `pg_dump` custom-format files of the whole database (users, actions, audit log, snapshots and reference tables). Copy `./backups` off the server (rsync, object storage): a backup on the same disk does not survive losing that disk.
+
+### CI
+
+`.github/workflows/ci.yml` runs on each push to `main` and each pull request:
+1. **lint**: `ruff check`
+2. **test**: pytest on SQLite and on a PostGIS service container, then `alembic check` (models and migrations agree)
+3. **docker**: builds the image, starts the whole stack with `docker compose up --wait`, logs in, calls a PostGIS endpoint and takes a backup
+
+Locally: `pip install -r requirements-dev.txt`, then `ruff check .` and `pytest -q`.
+Dependency versions are pinned in `requirements.lock` (used by Docker and CI). After changing `requirements.txt`, regenerate it with `pip freeze` in a clean virtualenv.
+
+## Security settings (env vars, prefix `SRT_`)
+
+| Variable | Purpose |
+|---|---|
+| `SRT_JWT_SECRET_KEY` | **Required**, at least 32 bytes. Signs access tokens. |
+| `SRT_BOOTSTRAP_ADMIN_USERNAME` / `SRT_BOOTSTRAP_ADMIN_PASSWORD` | Creates the first admin at startup if it does not exist (password ≥ 12 chars). |
+| `SRT_CORS_ORIGINS` | JSON list of allowed browser origins, e.g. `'["https://risques.example.fr"]'`. |
+| `SRT_RATE_LIMIT_DEFAULT` / `SRT_RATE_LIMIT_LOGIN` | Per-IP limits, default `120/minute` and `5/minute`. |
+| `SRT_RATE_LIMIT_STORAGE_URI` | `memory://` by default (per process, reset on restart). Use `redis://host:6379` with several workers (`pip install redis`). |
+| `SRT_TRUSTED_PROXIES` | JSON list of reverse-proxy IPs allowed to set `X-Forwarded-For`, e.g. `'["10.0.0.2"]'`. Needed behind a proxy, otherwise every user shares the proxy's IP for rate limiting and the audit log. |
+
+Changing a user's password revokes every token issued before the change.
+Logins (successful and failed), action changes and user changes are written to the audit log (`GET /auth/audit`, admin only).
+
+## Refreshing the data
+
+```bash
+python -m app.pipeline build                          # dry run: download, rebuild, validate, report
+python -m app.pipeline build --publish --snapshot     # replace data/*.parquet, then store this year's scores
+python -m app.pipeline build --keep argiles_classe    # refresh everything except that column
+python -m app.pipeline snapshot --year 2026           # store the current scores for a year
+```
+
+Every run writes the rebuilt files and a `report.md` to `data/staging/<timestamp>/`. The report lists level changes, the biggest score changes and every changed value.
+Nothing is published if validation fails (schema, school list, empty or out-of-range values).
+Publishing copies the previous files to `data/archive/<timestamp>/` first. To roll back, copy them back.
+Raw API responses are cached in `data/raw/<date>/`, so a re-run the same day (or `--offline`) needs no network.
+On Postgres, publishing also reloads the PostGIS reference tables. Restart the API after publishing: it loads the data once at startup.
+
+| Column(s) | Source |
+|---|---|
+| statut, history (enrolment, REP/REP+, IPS, DNB, value added) | data.education.gouv.fr: annuaire, effectifs, IPS (3 datasets), DNB par établissement, IVAC |
+| argiles_classe, cavities, ground movements, CatNat, DICRIM, ICPE / Seveso | Géorisques API v1 |
+| dans_ppri, ppri | IGN GPU API (servitude PM1) |
+| distance_centrale_km, centrale_proche | Static plant coordinates in `app/pipeline/geo.py` |
+| secteur_id + sector polygons, TMD columns, distance_repere_crue_km | **Not refreshed**: no public point API, copied from the published file |
+
+The list of schools, their names and positions come from the published file (the roster). The report flags schools that are new or closed in the directory, and positions that differ by more than 200 m.
+
+## Structure
+
+```
+app/
+├── main.py              # FastAPI app, lifespan (loads data + checks DB), middleware, routers
+├── core/logging.py      # JSON / text logs, request id middleware
+├── core/config.py       # Settings (env vars prefixed SRT_), score weights
+├── db.py                # engine + session, SQLite or Postgres, migration check
+├── manage.py            # python -m app.manage: check, load-reference, copy-sqlite
+├── data/store.py        # Loads parquet/geojson once, filtering, stats
+├── services/scoring.py  # 0–100 score per hazard + global score + alerts
+├── services/snapshots.py # yearly score snapshots
+├── services/spatial.py  # PostGIS queries (ST_Contains, ST_DWithin)
+├── services/reference_db.py # data files <-> PostGIS reference tables
+├── pipeline/            # rebuilds data/*.parquet from the source APIs (python -m app.pipeline)
+├── models/
+│   ├── schemas.py       # Pydantic response models (read-only data)
+│   ├── tracking.py      # Action table + create/update/read schemas
+│   ├── security.py      # users, school assignments, audit log
+│   ├── snapshots.py     # score_snapshot table
+│   └── reference.py     # PostGIS tables: college, college_annee, secteur
+migrations/              # Alembic (Postgres schema)
+└── api/routes/
+    ├── colleges.py      # /colleges, /colleges/{uai}, /risques, /historique
+    ├── secteurs.py      # /secteurs (GeoJSON with scores attached)
+    ├── actions.py       # CRUD on follow-up actions
+    └── stats.py         # dashboard numbers
+tests/                   # pytest + TestClient, in-memory SQLite
+```
+
+## Endpoints (prefix `/api/v1`)
+
+| Method | Path | What it does |
+|---|---|---|
+| GET | `/colleges?commune=&statut=&secteur_id=&niveau=&q=` | List of schools, sorted by risk score (highest first) |
+| GET | `/colleges/proches?lat=&lon=&rayon_km=5` | Schools within a radius, nearest first (PostGIS) |
+| GET | `/colleges/{uai}` | Full risk data and computed profile for one school |
+| GET | `/colleges/{uai}/risques` | Score per hazard, global score, level, alerts |
+| GET | `/colleges/{uai}/historique` | Enrolment, IPS and DNB results by year |
+| GET | `/colleges/{uai}/scores-annuels` | Risk scores stored by the yearly snapshots |
+| GET | `/secteurs?with_scores=true` | GeoJSON of the sectors, with each school's score attached |
+| GET | `/secteurs/localiser?lat=&lon=` | Sector containing a point, and its schools (PostGIS) |
+| GET | `/secteurs/{secteur_id}` | One sector polygon |
+| GET/POST | `/actions` | List actions (filter by `uai`, `alea`, `statut`, `priorite`, `en_retard`) or create one |
+| GET/PATCH/DELETE | `/actions/{id}` | Read, update or delete one action |
+| GET | `/stats` | Risk distribution and action progress |
+
+## Risk score (to validate)
+
+Each hazard gets a score from 0 to 100, computed in `services/scoring.py`:
+
+- **inondation** (flood): inside a PPRI, CatNat flood declarations, distance to a flood marker
+- **argiles** (clay soils): clay class plus CatNat drought declarations
+- **mouvements_terrain** (ground movement): cavities and ground movements within 500 m
+- **industriel** (industrial): distance to a Seveso site, number of ICPE sites within 1 km
+- **tmd** (hazardous-materials transport): distance to the route, heavier for motorways and railways
+- **nucleaire** (nuclear): distance to the nearest plant
+
+The global score is a weighted average. You can change the weights with env vars, for example `SRT_WEIGHT_INONDATION=2`.
+The level is `faible` below 30, `moyen` from 30 to 49 and `eleve` from 50.
+With the current thresholds the 70 schools split into 30 faible, 29 moyen and 11 eleve.
+
+⚠️ These thresholds are a heuristic for setting priorities. They are not an official classification. Sprint 2 is where you review them.
+
+---
+
+# Sprint plan (2-week sprints)
+
+### ✅ Sprint 0: Setup (done in this scaffold)
+- Project structure, settings, data store, tests, Swagger docs
+
+### ✅ Sprint 1: Read-only API (done)
+- `/colleges`, `/colleges/{uai}`, `/historique`, `/secteurs`, filters, search
+- **Done when:** all 70 schools and 59 sectors are served and the tests are green
+
+### ✅ Sprint 2: Risk scoring (first version done; needs review)
+- Score per hazard, global score, level, main hazard, DICRIM alert
+- **To do:** review the thresholds with a risk referent and add unit tests for each hazard function
+- **Done when:** the people who own the data agree with the ranking of the top 10 schools
+
+### ✅ Sprint 3: Action tracking (first version done)
+- CRUD on actions (hazard, priority, status, owner, due date), overdue flag
+- **To do:** add Alembic migrations, an action history table (who changed what), and comments
+
+### ✅ Sprint 4: Map and dashboard frontend
+- Leaflet or MapLibre map of the sectors, colored by `score_max`, with school markers
+- School page: radar chart of the hazards, DNB/IPS history, list of actions
+- Options: a separate frontend (React or Vue) calling the API, or Dash or Streamlit calling the API
+- **Implementation:** lightweight static frontend served by FastAPI at `/`; it calls the `/api/v1` endpoints directly.
+- The map tiles and Leaflet/Chart.js assets are loaded from their public CDN sources.
+
+### ✅ Sprint 5: Users and security
+- Authentication with JWT or OAuth2 (`fastapi.security`)
+- Roles: `admin` (everything), `referent` (actions for their own schools), `lecteur` (read only)
+- Audit log, rate limiting, CORS limited to known origins
+
+### ✅ Sprint 6: Data pipeline and refresh
+- ✅ Script that rebuilds the parquet files from the source datasets (Géorisques API, data.education.gouv.fr): `python -m app.pipeline`
+- ✅ Snapshot the scores each year so you can track how a school's risk changes over time (`score_snapshot` table, `/colleges/{uai}/scores-annuels`)
+- ✅ Postgres + PostGIS (`docker-compose.yml`, Alembic migrations, reference tables with spatial indexes, `/secteurs/localiser` with `ST_Contains`, `/colleges/proches` with `ST_DWithin`)
+- **To do:** schedule the refresh (cron or CI job) once the first refresh has been reviewed
+
+### ✅ Sprint 7: Deployment
+- ✅ Dockerfile + docker-compose (API + PostGIS + Redis + migrations + backups), GitHub Actions CI (lint, tests, Docker smoke test)
+- ✅ Monitoring (`/health`, `/health/ready`, JSON logs with request ids), daily backups with retention and a restore command
+
+### Backlog ideas
+- Email alerts when an action is overdue
+- Export school risk reports as PDF or CSV
+- Score weighted by `effectif_total` (number of pupils exposed)
+- Check that each school's PPMS (safety plan) is up to date
