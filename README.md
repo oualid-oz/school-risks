@@ -205,7 +205,7 @@ tests/                   # pytest + TestClient, in-memory SQLite
 
 | Method | Path | What it does |
 |---|---|---|
-| GET | `/colleges?commune=&statut=&secteur_id=&niveau=&q=` | List of schools, sorted by risk score (highest first) |
+| GET | `/colleges?commune=&statut=&secteur_id=&niveau=&q=&tri=` | List of schools, highest first: `tri=score` (default) or `tri=priorite` (pupils exposed × risk) |
 | GET | `/colleges/proches?lat=&lon=&rayon_km=5` | Schools within a radius, nearest first (PostGIS) |
 | GET | `/colleges/{uai}` | Full risk data and computed profile for one school |
 | GET | `/colleges/{uai}/risques` | Score per hazard, global score, level, alerts |
@@ -233,12 +233,55 @@ The global score is a weighted average. You can change the weights with env vars
 The level is `faible` below 30, `moyen` from 30 to 49 and `eleve` from 50.
 With the current thresholds the 70 schools split into 30 faible, 29 moyen and 11 eleve.
 
+### Priority index (pupils exposed)
+
+The score says how dangerous a school's location is. The **priority index** says how many pupils that danger concerns:
+`indice_priorite = score_global × effectif_total / 100`, i.e. pupils weighted by risk.
+A school scoring 60 with 800 pupils (index 480) ranks above one scoring 70 with 150 pupils (index 105).
+The score and the level (`faible` / `moyen` / `eleve`) do not change.
+A school without an enrolment figure gets no index (not 0) and the alert "Effectif inconnu", and comes last when sorting by priority.
+With the current data the index goes from 31 to 582. Compared with the score ranking, large schools with a medium score move up (Condorcet, Montabuzard), and small schools with a high score move down.
+The dashboard can rank the list by score or by pupils exposed. In "élèves exposés" mode the map dots are sized by the index (area ∝ index), and their colour stays the risk level.
+Yearly snapshots store the pupil count and the index from Sprint 8 on. Older snapshots leave them empty.
+
 ⚠️ These thresholds are a heuristic for setting priorities. They are not an official classification. Sprint 2 is where you review them.
 
 ---
 
-### Backlog ideas
-- Email alerts when an action is overdue
-- Export school risk reports as PDF or CSV
-- Score weighted by `effectif_total` (number of pupils exposed)
-- Check that each school's PPMS (safety plan) is up to date
+## Next sprints
+
+Order: Sprint 8 is small and changes how priorities are read. Sprint 9 creates the PPMS data that Sprint 10 sends alerts about. Sprint 11 does not depend on the others and can move earlier if people ask for reports first.
+
+### ✅ Sprint 8: Priority weighted by pupils exposed
+- Keep `score_global` as it is (how dangerous the location is) and add a separate **priority index**: `score_global × effectif_total / 100`, i.e. "pupils exposed, weighted by risk". A score of 60 with 800 pupils then ranks above 70 with 150 pupils.
+- Schools without an `effectif_total` get no index and are flagged, instead of being treated as 0.
+- API: `GET /colleges?tri=priorite`, the index in the summaries and in `/stats` (pupils per risk level). It is stored in the yearly snapshots too (migration).
+- Frontend: sort by "priorité" in the list, and a map toggle score / priority.
+- **Done when:** the risk referent agrees with the new top 10 (**still to do**: review with them), and tests cover the missing-enrolment case (done).
+
+### ⏭ Sprint 9: PPMS (safety plan) tracking
+- No open dataset exists, so the data is entered in the app: a `ppms` table (school, last update date, last drills by type: risques majeurs, intrusion, incendie, who entered it), keeping the history.
+- Rules (configurable): PPMS not updated for more than `SRT_PPMS_MAX_AGE_MONTHS` (default 12), or no drill this school year. They are shown as alerts in the risk profile, like the DICRIM alert.
+- Permissions follow actions: referents edit their own schools, lecteurs read, every change is audited.
+- Dashboard: how many schools have an outdated PPMS, and a filter `GET /colleges?ppms=a_jour|ancien|absent`.
+- **Done when:** a referent can enter a PPMS and the drills for their school, and the outdated ones are visible on the dashboard.
+
+### ⏭ Sprint 10: Email alerts
+- Users get an `email` (migration) and an opt-in for alerts.
+- Weekly digest per referent for their schools: overdue actions, actions due within 7 days, outdated PPMS (Sprint 9). Admins get a department-wide summary.
+- Sending through SMTP settings (any provider). Locally, a "log only" mode writes the emails to the logs instead of sending them.
+- Scheduling: an internal endpoint protected by a secret, called by **Vercel Cron** (`vercel.json` `crons`, `CRON_SECRET`) or by a small cron service in docker compose.
+- A `notification_log` table makes every run idempotent: running twice in the same week sends nothing twice.
+- **Done when:** a referent receives the digest in a real inbox, a second run sends nothing, and the whole run fits in the Vercel function time limit.
+
+### ⏭ Sprint 11: Exports (CSV and PDF)
+- CSV: the list of schools with their scores (same filters as the API) and the list of actions. Referents only export their own schools. The files open correctly in French Excel (UTF-8 with BOM, `;` separator).
+- PDF "fiche risques" per school: identity, score per hazard, alerts, PPMS status, open actions and score history. Built with **fpdf2** (pure Python, works on Vercel; WeasyPrint needs system libraries Vercel does not have).
+- Download buttons on the school page and the dashboard. Exports are written to the audit log.
+- **Done when:** a referent downloads the fiche for one of their schools and gets a 403 for any other school.
+
+### Carried over from earlier sprints
+- Sprint 2: review the risk thresholds with a risk referent, and add unit tests for each hazard function.
+- Sprint 3: action history and comments (the audit log only records who changed which fields).
+- Sprint 6: schedule the data refresh (for example a monthly GitHub Actions job that runs the pipeline and opens a pull request with the report).
+- Frontend for the spatial endpoints: click the map to see the sector and its schools, and "schools near me".

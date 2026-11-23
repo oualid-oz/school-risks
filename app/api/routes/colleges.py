@@ -33,10 +33,15 @@ def list_colleges(
     secteur_id: str | None = None,
     niveau: Literal["faible", "moyen", "eleve"] | None = None,
     q: str | None = Query(None, description="Search in name, commune or UAI"),
+    tri: Literal["score", "priorite"] = Query(
+        "score",
+        description="score: risk of the location. priorite: pupils exposed weighted by risk "
+        "(score_global × effectif_total / 100); schools without enrolment come last.",
+    ),
     store: DataStore = Depends(get_store),
 ):
-    """All schools, sorted by global risk score (highest first)."""
-    return store.list_colleges(commune, statut, secteur_id, niveau, q)
+    """All schools, highest first by `tri`."""
+    return store.list_colleges(commune, statut, secteur_id, niveau, q, tri)
 
 
 @router.get("/proches", response_model=list[CollegeNearby])

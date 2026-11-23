@@ -38,6 +38,7 @@ def take_snapshot(
     sha = _file_sha256()
     count = 0
     for uai, p in sorted(store.all_profiles().items()):
+        college = store.get_college(uai)
         session.add(
             ScoreSnapshot(
                 annee=annee,
@@ -45,6 +46,8 @@ def take_snapshot(
                 score_global=p["score_global"],
                 niveau=p["niveau"],
                 alea_principal=p["alea_principal"],
+                effectif_total=college["effectif_total"],
+                indice_priorite=p["indice_priorite"],
                 aleas=json.dumps(p["aleas"], sort_keys=True),
                 poids=poids,
                 source_sha256=sha,
@@ -65,6 +68,8 @@ def history_for(session: Session, uai: str) -> list[ScoreSnapshotRead]:
             score_global=r.score_global,
             niveau=r.niveau,
             alea_principal=r.alea_principal,
+            effectif_total=r.effectif_total,
+            indice_priorite=r.indice_priorite,
             aleas=json.loads(r.aleas),
             created_at=r.created_at,
         )
