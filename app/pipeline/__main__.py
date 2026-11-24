@@ -10,6 +10,7 @@ The API loads the data files once at startup: restart it after publishing.
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import sys
 from datetime import UTC, date, datetime
@@ -41,6 +42,11 @@ def cmd_build(args: argparse.Namespace) -> int:
 
     errors = validate(result, previous)
     diff = compare(result.risques, previous, result.history, previous_history)
+    if result.secteurs is not None:
+        from app.pipeline import sectors
+
+        published = json.loads((data_dir / settings.secteurs_file).read_text(encoding="utf-8"))
+        diff["secteurs"] = sectors.compare(result.secteurs, published)
     report = render_report(result, diff, errors, started)
 
     staging = data_dir / "staging" / stamp

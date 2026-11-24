@@ -210,3 +210,40 @@ def test_digest_is_sent_once_per_week_on_postgres(pg_client, pg_engine, monkeypa
         loser = digest_service._claim(b, user_b, "2026-W48", monday + timedelta(hours=3))
         assert winner is not None and winner.updated_at != old_stamp
         assert loser is None
+
+
+def test_deploy_check_reloads_changed_data_files(pg_engine, monkeypatch, capsys, tmp_path):
+    import shutil
+
+    import pandas as pd
+    from sqlalchemy import select as sa_select
+
+    import app.manage as manage
+    from app.models.reference import college
+
+    monkeypatch.setattr(settings, "database_url", URL)
+    monkeypatch.setattr(app_db, "engine", pg_engine)
+    monkeypatch.setattr(manage, "engine", pg_engine)
+    load_reference(pg_engine)  # database in step with the repository files
+    assert manage.main(["deploy-check"]) == 0
+    assert "loaded" not in capsys.readouterr().out  # nothing changed: no reload
+
+    # A data refresh renames a school in the files.
+    for name in (settings.risques_file, settings.colleges_file, settings.secteurs_file):
+        shutil.copyfile(settings.data_dir / name, tmp_path / name)  # not the read-only mode
+    risques = pd.read_parquet(tmp_path / settings.risques_file)
+    risques.loc[risques["uai"] == "0450003J", "nom"] = "Jean Moulin (renommé)"
+    risques.to_parquet(tmp_path / settings.risques_file, index=False)
+    monkeypatch.setattr(settings, "data_dir", tmp_path)
+
+    monkeypatch.setenv("SRT_MIGRATE_ON_BUILD", "0")  # read-only build: reports, does not load
+    assert manage.main(["deploy-check"]) == 0
+    assert "differ from the database" in capsys.readouterr().err
+
+    monkeypatch.delenv("SRT_MIGRATE_ON_BUILD")
+    assert manage.main(["deploy-check"]) == 0
+    assert "differ from the deployed data files" in capsys.readouterr().out
+    with pg_engine.connect() as conn:
+        name = conn.execute(sa_select(college.c.nom).where(college.c.uai == "0450003J")).scalar_one()
+    assert name == "Jean Moulin (renommé)"
+    load_reference(pg_engine, settings.data_dir)  # leave the files' version for later tests

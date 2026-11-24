@@ -22,17 +22,33 @@ let statsStale = false; // a PPMS change happened: refresh the dashboard numbers
 let currentCharts = [];
 let accessToken = null;
 
+// Level thresholds: loaded from /scores/parametres after login (SRT_SEUIL_* settings).
+let thresholds = { moyen: 30, eleve: 50 };
+
 function riskClass(score) {
   if (score == null) return "risk-unknown";
-  if (score >= 50) return "risk-high";
-  if (score >= 30) return "risk-medium";
+  if (score >= thresholds.eleve) return "risk-high";
+  if (score >= thresholds.moyen) return "risk-medium";
   return "risk-low";
+}
+
+function fmtThreshold(value) {
+  return Number.isInteger(value) ? String(value) : String(value).replace(".", ",");
+}
+
+async function loadThresholds() {
+  const params = await getJson("/scores/parametres");
+  thresholds = { moyen: params.seuil_moyen, eleve: params.seuil_eleve };
+  const [low, medium, high] = document.querySelectorAll(".map-legend small");
+  low.textContent = `0 – <${fmtThreshold(thresholds.moyen)}`;
+  medium.textContent = `${fmtThreshold(thresholds.moyen)} – <${fmtThreshold(thresholds.eleve)}`;
+  high.textContent = `${fmtThreshold(thresholds.eleve)} – 100`;
 }
 
 function riskColor(score) {
   if (score == null) return "#aeb8b0";
-  if (score >= 50) return "#d65b50";
-  if (score >= 30) return "#e5a749";
+  if (score >= thresholds.eleve) return "#d65b50";
+  if (score >= thresholds.moyen) return "#e5a749";
   return "#54a879";
 }
 
@@ -130,7 +146,7 @@ function showError(id, message) {
   banner.hidden = false;
 }
 
-const VIEWS = ["login-screen", "dashboard", "school-page", "admin-page"];
+const VIEWS = ["login-screen", "dashboard", "school-page", "admin-page", "simulation-page"];
 
 function showView(id) {
   VIEWS.forEach((view) => { document.getElementById(view).hidden = view !== id; });
@@ -201,7 +217,7 @@ function renderStats(stats) {
       `${nf.format(stats.ppms_par_statut?.ancien || 0)} à mettre à jour · ${nf.format(stats.ppms_par_statut?.absent || 0)} non renseignés`,
     ],
     [nf.format(stats.nb_eleves), "Élèves scolarisés", `dont ${nf.format(stats.eleves_par_niveau?.eleve || 0)} en risque élevé`],
-    [nf.format(stats.par_niveau?.eleve || 0), "Risque élevé", "score global ≥ 50"],
+    [nf.format(stats.par_niveau?.eleve || 0), "Risque élevé", `score global ≥ ${fmtThreshold(thresholds.eleve)}`],
     [nf.format(openActions), "Actions ouvertes", "à faire ou en cours"],
   ];
   const grid = document.getElementById("stats-grid");
@@ -763,6 +779,7 @@ function route() {
   const match = location.hash.match(/^#school\/([^/]+)$/);
   if (match) showSchoolPage(decodeURIComponent(match[1]));
   else if (location.hash === "#admin" && currentUser.role === "admin") showAdminPage();
+  else if (location.hash === "#simulation") showSimulationPage(); // simulation.js
   else {
     currentCharts.forEach((chart) => chart.destroy());
     currentCharts = [];
@@ -779,6 +796,7 @@ async function init() {
   setupAdmin(); // admin.js
   setupSpatial(); // spatial.js
   setupAccountMenu();
+  setupSimulation(); // simulation.js
   // Skip link: move the focus without touching the URL hash (the hash is the router).
   document.querySelector(".skip-link").addEventListener("click", (event) => {
     event.preventDefault();
@@ -842,6 +860,7 @@ async function init() {
 
 async function loadDashboard() {
   try {
+    await loadThresholds(); // before anything is coloured
     const [stats, sectorData, collegeData] = await Promise.all([
       getJson("/stats"),
       getJson("/secteurs?with_scores=true"),

@@ -1,7 +1,9 @@
 """Load the reference files into PostGIS, and read them back for the data store."""
 from __future__ import annotations
 
+import hashlib
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -11,7 +13,7 @@ from sqlalchemy import Engine, func, select, text
 from app.core.config import settings
 from app.data.schema import HISTORY_SCHEMA, RISQUES_SCHEMA
 from app.data.store import _records
-from app.models.reference import college, college_annee, secteur
+from app.models.reference import college, college_annee, reference_load, secteur
 
 SECTOR_FIELDS = ("secteur_id", "secteur", "commune", "code_insee", "departement")
 
@@ -20,9 +22,28 @@ def _rows(df: pd.DataFrame) -> list[dict[str, Any]]:
     return _records(df)
 
 
+def files_sha256(data_dir: Path | None = None) -> str:
+    """Fingerprint of the three reference files, in a fixed order."""
+    d = data_dir or settings.data_dir
+    digest = hashlib.sha256()
+    for name in (settings.risques_file, settings.colleges_file, settings.secteurs_file):
+        digest.update(name.encode())
+        digest.update((d / name).read_bytes())
+    return digest.hexdigest()
+
+
+def loaded_sha256(engine: Engine) -> str | None:
+    """Fingerprint of the files last loaded into the database (None: never recorded)."""
+    with engine.connect() as conn:
+        return conn.execute(
+            select(reference_load.c.sha256).order_by(reference_load.c.id.desc()).limit(1)
+        ).scalar()
+
+
 def load_reference(engine: Engine, data_dir: Path | None = None) -> dict[str, int]:
     """Replace the reference tables with the content of the data files, in one transaction."""
     d = data_dir or settings.data_dir
+    sha = files_sha256(d)
     risques = pd.read_parquet(d / settings.risques_file)
     history = pd.read_parquet(d / settings.colleges_file)
     with open(d / settings.secteurs_file, encoding="utf-8") as f:
@@ -49,6 +70,9 @@ def load_reference(engine: Engine, data_dir: Path | None = None) -> dict[str, in
         invalid = conn.execute(
             select(func.count()).select_from(secteur).where(~func.ST_IsValid(secteur.c.geom))
         ).scalar_one()
+        conn.execute(reference_load.insert().values(
+            sha256=sha, colleges=len(risques), loaded_at=datetime.now(UTC)
+        ))
     return {
         "college": len(risques),
         "college_annee": len(history),

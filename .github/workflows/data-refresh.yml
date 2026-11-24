@@ -1,0 +1,54 @@
+name: Data refresh
+
+# Rebuilds the reference data from the public APIs each month and opens a pull request with
+# the change report. Nothing reaches production until a person merges it.
+on:
+  schedule:
+    - cron: "0 4 2 * *"  # 2nd of each month, 04:00 UTC
+  workflow_dispatch:
+    inputs:
+      keep:
+        description: Columns to keep from the published files (space separated), e.g. argiles_classe
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: data-refresh
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # With the default token, the pull request does not start the CI workflow (GitHub rule).
+          # Add a DATA_REFRESH_TOKEN secret (fine-grained PAT: contents + pull requests) to get CI on it.
+          token: ${{ secrets.DATA_REFRESH_TOKEN || github.token }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: pip
+          cache-dependency-path: |
+            requirements.lock
+            pyproject.toml
+      - run: pip install -e ".[parquet]" -c requirements.lock
+      - name: Rebuild, compare, open or update the pull request
+        env:
+          PUSH: "1"
+          KEEP: ${{ github.event.inputs.keep || '' }}
+          BASE_BRANCH: ${{ github.event.repository.default_branch }}
+          GH_TOKEN: ${{ secrets.DATA_REFRESH_TOKEN || github.token }}
+        run: deploy/data_refresh.sh
+      - name: Raw API responses and staged files
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: data-refresh-${{ github.run_id }}
+          path: data/staging/
+          if-no-files-found: ignore

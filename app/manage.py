@@ -97,8 +97,9 @@ def cmd_copy_sqlite(args: argparse.Namespace) -> int:
 
 def cmd_deploy_check(_: argparse.Namespace) -> int:
     """Build step for serverless deployments (Vercel): migrate, and load the reference data
-    shipped in data/ when the tables are empty (a new database, or a fresh Neon branch for a
-    preview deployment). With SRT_MIGRATE_ON_BUILD=0 the build never writes to the database.
+    shipped in data/ when the tables are empty (a new database, a fresh Neon branch for a
+    preview deployment) or when the files changed since the last load (a merged data
+    refresh). With SRT_MIGRATE_ON_BUILD=0 the build never writes to the database.
     """
     import os
 
@@ -123,13 +124,18 @@ def cmd_deploy_check(_: argparse.Namespace) -> int:
         return 1
     with engine.connect() as conn:
         schools = conn.execute(select(func.count()).select_from(college)).scalar_one()
-    if not schools and may_write:
-        from app.services.reference_db import load_reference
+    from app.services.reference_db import files_sha256, load_reference, loaded_sha256
 
+    files_sha, db_sha = files_sha256(), loaded_sha256(engine)
+    if may_write and (not schools or files_sha != db_sha):
+        reason = "were empty" if not schools else "differ from the deployed data files"
         counts = load_reference(engine)
         schools = counts["college"]
-        print(f"Reference tables were empty: loaded {schools} schools, "
+        print(f"Reference tables {reason}: loaded {schools} schools, "
               f"{counts['college_annee']} school years, {counts['secteur']} sectors.")
+    elif files_sha != db_sha:
+        print("The deployed data files differ from the database, but the build does not write "
+              "(SRT_MIGRATE_ON_BUILD=0): run `python -m app.manage load-reference`.", file=sys.stderr)
     if not schools:
         print(
             "The reference tables are empty: run `python -m app.manage load-reference` "

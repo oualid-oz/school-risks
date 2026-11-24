@@ -10,6 +10,7 @@ from geoalchemy2 import Geometry
 from sqlalchemy import (
     Boolean,
     Column,
+    DateTime,
     Float,
     ForeignKey,
     Integer,
@@ -96,4 +97,16 @@ secteur = Table(
     Column("code_insee", String(5)),
     Column("departement", String),
     Column("geom", Geometry("MULTIPOLYGON", srid=4326, spatial_index=True), nullable=False),
+)
+
+
+# One row per load of the reference tables, with the fingerprint of the data files. The
+# Vercel build compares it with the files being deployed and reloads when they changed.
+reference_load = Table(
+    "reference_load",
+    reference_metadata,
+    Column("id", Integer, primary_key=True),
+    Column("sha256", String(64), nullable=False),
+    Column("colleges", Integer, nullable=False),
+    Column("loaded_at", DateTime(timezone=True), nullable=False),
 )
