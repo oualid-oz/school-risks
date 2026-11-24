@@ -270,3 +270,29 @@ def test_keyboard_only(page):
     expect(page.locator("#account-dialog")).to_be_visible()
     page.keyboard.press("Escape")  # native <dialog> closes on Escape
     expect(page.locator("#account-dialog")).to_be_hidden()
+
+
+def test_account_menu_is_a_dropdown_on_phones(admin_page):
+    page = admin_page
+    page.set_viewport_size({"width": 390, "height": 844})
+    toggle = page.get_by_role("button", name="Menu du compte")
+    menu = page.locator("#account-menu")
+    expect(toggle).to_be_visible()
+    expect(menu).to_be_hidden()
+    toggle.click()
+    expect(toggle).to_have_attribute("aria-expanded", "true")
+    expect(menu).to_be_visible()
+    expect(menu).to_contain_text("e2e-admin · admin")
+    page.keyboard.press("Escape")  # closes, focus back on the button
+    expect(menu).to_be_hidden()
+    expect(toggle).to_be_focused()
+    toggle.click()
+    page.get_by_role("link", name="Utilisateurs").click()  # choosing an item closes the menu
+    expect(page.locator("#admin-page")).to_be_visible()
+    expect(menu).to_be_hidden()
+    toggle.click()
+    page.mouse.click(20, 700)  # a click elsewhere (outside the open menu) closes it
+    expect(menu).to_be_hidden()
+    page.set_viewport_size({"width": 1280, "height": 900})  # desktop: inline, no toggle
+    expect(toggle).to_be_hidden()
+    expect(page.get_by_role("button", name="Mon compte")).to_be_visible()
