@@ -48,12 +48,33 @@ class ActionBase(SQLModel):
 class Action(ActionBase, table=True):
     id: int | None = Field(default=None, primary_key=True)
     uai: str = Field(index=True, max_length=8)
+    # Optional app user in charge (an admin or a referent of the school). `responsable`
+    # stays free text for people without an account.
+    responsable_user_id: int | None = Field(
+        default=None, foreign_key="app_user.id", ondelete="SET NULL", index=True
+    )
     created_at: datetime = Field(default_factory=_now)
     updated_at: datetime = Field(default_factory=_now)
 
 
+class ActionEvent(SQLModel, table=True):
+    """Timeline of an action: creation, field changes (old → new) and comments."""
+
+    __tablename__ = "action_event"
+
+    id: int | None = Field(default=None, primary_key=True)
+    action_id: int = Field(foreign_key="action.id", ondelete="CASCADE", index=True)
+    kind: str = Field(max_length=20)  # creation | modification | commentaire
+    changes: str | None = None  # JSON [{"champ", "avant", "apres"}]; null values = not kept
+    texte: str | None = Field(default=None, max_length=2000)
+    author_user_id: int | None = Field(default=None, foreign_key="app_user.id", ondelete="SET NULL")
+    author_username: str = Field(max_length=100)
+    created_at: datetime = Field(default_factory=_now, index=True)
+
+
 class ActionCreate(ActionBase):
     uai: str = Field(min_length=8, max_length=8)
+    responsable_user_id: int | None = None
 
 
 class ActionUpdate(SQLModel):
@@ -64,6 +85,13 @@ class ActionUpdate(SQLModel):
     statut: Statut | None = None
     responsable: str | None = None
     echeance: date | None = None
+    responsable_user_id: int | None = None
+
+
+class CommentSummary(SQLModel):
+    texte: str
+    author_username: str
+    created_at: datetime
 
 
 class ActionRead(ActionBase):
@@ -72,3 +100,26 @@ class ActionRead(ActionBase):
     created_at: datetime
     updated_at: datetime
     en_retard: bool = False
+    responsable_user_id: int | None = None
+    responsable_username: str | None = None
+    dernier_commentaire: CommentSummary | None = None
+
+
+class CommentCreate(SQLModel):
+    texte: str = Field(min_length=1, max_length=2000)
+
+
+class ChangeRead(SQLModel):
+    champ: str
+    avant: str | None
+    apres: str | None
+
+
+class ActionEventRead(SQLModel):
+    id: int
+    kind: str
+    changes: list[ChangeRead] | None
+    texte: str | None
+    author_username: str
+    created_at: datetime
+    deletable: bool = False  # a comment the current user may delete

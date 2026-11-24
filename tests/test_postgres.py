@@ -247,3 +247,40 @@ def test_deploy_check_reloads_changed_data_files(pg_engine, monkeypatch, capsys,
         name = conn.execute(sa_select(college.c.nom).where(college.c.uai == "0450003J")).scalar_one()
     assert name == "Jean Moulin (renommé)"
     load_reference(pg_engine, settings.data_dir)  # leave the files' version for later tests
+
+
+def test_migration_0006_backfills_history_from_the_audit_log(pg_engine):
+    from sqlalchemy import text as sql
+
+    config = alembic_config(URL)
+    command.downgrade(config, "0005")
+    with pg_engine.begin() as conn:
+        user_id = conn.execute(sql(
+            "INSERT INTO app_user (username, hashed_password, role, active, created_at, alertes_email) "
+            "VALUES ('backfill-ref', 'x', 'referent', true, now(), false) RETURNING id")).scalar_one()
+        action_id = conn.execute(sql(
+            "INSERT INTO action (titre, alea, priorite, statut, uai, created_at, updated_at) "
+            "VALUES ('Ancienne action', 'general', 'normale', 'a_faire', '0450003J', now(), now()) "
+            "RETURNING id")).scalar_one()
+        for event, resource, details in (
+            ("action.created", action_id, '{"uai": "0450003J"}'),
+            ("action.updated", action_id, '{"uai": "0450003J", "updated_fields": ["priorite", "statut"]}'),
+            ("action.created", 999999, '{"uai": "0450003J"}'),  # deleted since: skipped
+        ):
+            conn.execute(sql(
+                "INSERT INTO audit_log (actor_user_id, actor_username, event, resource_type, resource_id, "
+                "details, created_at) VALUES (:u, 'backfill-ref', :e, 'action', :r, :d, now())"),
+                {"u": user_id, "e": event, "r": str(resource), "d": details})
+    command.upgrade(config, "head")
+    with pg_engine.connect() as conn:
+        rows = conn.execute(sql(
+            "SELECT kind, changes, author_username FROM action_event WHERE action_id = :a ORDER BY id"),
+            {"a": action_id}).all()
+        orphans = conn.execute(sql("SELECT count(*) FROM action_event WHERE action_id = 999999")).scalar()
+    assert [r[0] for r in rows] == ["creation", "modification"] and orphans == 0
+    assert rows[1][1] == '[{"champ": "priorite", "avant": null, "apres": null}, ' \
+                         '{"champ": "statut", "avant": null, "apres": null}]'
+    assert rows[0][2] == "backfill-ref"
+    with pg_engine.begin() as conn:  # leave the database as the other tests expect
+        conn.execute(sql("DELETE FROM action_event WHERE action_id = :a"), {"a": action_id})
+        conn.execute(sql("DELETE FROM action WHERE id = :a"), {"a": action_id})

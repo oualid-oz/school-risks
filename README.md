@@ -177,7 +177,7 @@ To try it locally without git: `deploy/data_refresh.sh` (it publishes into `data
 | dans_ppri, ppri | IGN GPU API (servitude PM1) |
 | distance_centrale_km, centrale_proche | Static plant coordinates in `app/pipeline/geo.py` |
 | Sector polygons (`colleges_secteurs.geojson`) | Département du Loiret, ArcGIS service of its GIS (also on data.gouv.fr), outlines generalised to ≈10 m by the service |
-| TMD columns, distance_repere_crue_km | **Not refreshed**: no usable public source yet, copied from the published file (see docs/roadmap.md, Sprint 14) |
+| TMD columns, distance_repere_crue_km | **Not refreshed**: no usable public source yet, copied from the published file. Flood markers: the national platform's CSV export is capped at 500 rows. TMD: no public dataset of TMD routes for Loiret |
 
 The list of schools, their names and positions come from the published file (the roster). The report flags schools that are new or closed in the directory, and positions that differ by more than 200 m.
 
@@ -238,6 +238,9 @@ tests/                   # pytest + TestClient, in-memory SQLite
 | PATCH | `/auth/me` | Own account: `email`, `alertes_email` (weekly digest opt-in; admins and referents) |
 | GET/POST | `/actions` | List actions (filter by `uai`, `alea`, `statut`, `priorite`, `en_retard`) or create one |
 | GET/PATCH/DELETE | `/actions/{id}` | Read, update or delete one action |
+| GET | `/actions/{id}/historique` | Timeline: creation, changes (old → new), comments; newest first |
+| POST/DELETE | `/actions/{id}/commentaires[/{event_id}]` | Comment (admins, the school's referents); delete (author or admin, audited with the text) |
+| GET | `/actions/assignables?uai=` | People an action of this school can be assigned to (`responsable_user_id`; they get an email if their alerts are on) |
 | GET | `/stats` | Risk distribution and action progress |
 | GET | `/scores/parametres` | Weights, level thresholds and clay class points in use |
 | POST | `/scores/simulation` | What-if: scores, levels and ranks with other parameters, next to today's |

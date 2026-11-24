@@ -31,6 +31,7 @@ GREEN, INK, MUTED, LINE = (24, 118, 83), (23, 35, 30), (110, 120, 114), (226, 23
 LEVEL_COLORS = {"faible": (84, 168, 121), "moyen": (229, 167, 73), "eleve": (214, 91, 80)}
 DRILL_LABELS = {"risques_majeurs": "Risques majeurs", "intrusion": "Intrusion", "incendie": "Incendie"}
 MAX_ACTIONS = 25
+MAX_COMMENTS = 5
 
 
 def level_of(score: float) -> str:
@@ -240,6 +241,19 @@ def build_fiche(data: FicheData) -> bytes:
         pdf.grid(["Action", "Aléa", "Priorité", "Échéance", "Statut"], rows, (64, 30, 18, 44, 22))
         if len(data.actions) > MAX_ACTIONS:
             pdf.muted(f"… et {len(data.actions) - MAX_ACTIONS} autre(s) : voir l’application.")
+        commented = sorted(
+            (a for a in data.actions if getattr(a, "dernier_commentaire", None)),
+            key=lambda a: a.dernier_commentaire.created_at, reverse=True,
+        )[:MAX_COMMENTS]
+        if commented:
+            pdf.ln(2)
+            pdf.set_font("DejaVu", "B", 9)
+            pdf.cell(0, 5, "Derniers commentaires", new_x="LMARGIN", new_y="NEXT")
+            pdf.bullet_list([
+                f"{a.titre} — {a.dernier_commentaire.author_username}, "
+                f"{fr_date(a.dernier_commentaire.created_at.date())} : {a.dernier_commentaire.texte}"
+                for a in commented
+            ])
     else:
         pdf.muted("Aucune action ouverte.")
 
