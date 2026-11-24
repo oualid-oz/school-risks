@@ -30,7 +30,7 @@ jobs:
           # With the default token, the pull request does not start the CI workflow (GitHub rule).
           # Add a DATA_REFRESH_TOKEN secret (fine-grained PAT: contents + pull requests) to get CI on it.
           token: ${{ secrets.DATA_REFRESH_TOKEN || github.token }}
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.14"
           cache: pip

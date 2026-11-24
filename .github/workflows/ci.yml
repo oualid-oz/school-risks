@@ -17,7 +17,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.14"
       - run: pip install "ruff>=0.8"
@@ -41,7 +41,7 @@ jobs:
       SRT_TEST_DATABASE_URL: postgresql+psycopg://srt:ci-password@127.0.0.1:5432/school_risks_test
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.14"
           cache: pip
@@ -77,7 +77,7 @@ jobs:
       SRT_E2E_DATABASE_URL: postgresql+psycopg://srt:ci-password@127.0.0.1:5432/school_risks_e2e
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.14"
           cache: pip
