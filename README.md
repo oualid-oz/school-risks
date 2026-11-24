@@ -177,7 +177,7 @@ To try it locally without git: `deploy/data_refresh.sh` (it publishes into `data
 | dans_ppri, ppri | IGN GPU API (servitude PM1) |
 | distance_centrale_km, centrale_proche | Static plant coordinates in `app/pipeline/geo.py` |
 | Sector polygons (`colleges_secteurs.geojson`) | Département du Loiret, ArcGIS service of its GIS (also on data.gouv.fr), outlines generalised to ≈10 m by the service |
-| TMD columns, distance_repere_crue_km | **Not refreshed**: no usable public source yet, copied from the published file (see docs/roadmap.md, Sprint 14) |
+| TMD columns, distance_repere_crue_km | **Not refreshed**: no usable public source yet, copied from the published file. Flood markers: the national platform's CSV export is capped at 500 rows. TMD: no public dataset of TMD routes for Loiret |
 
 The list of schools, their names and positions come from the published file (the roster). The report flags schools that are new or closed in the directory, and positions that differ by more than 200 m.
 
