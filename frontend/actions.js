@@ -33,6 +33,7 @@ function setupActionDialog() {
       statut: value("statut"),
       responsable: value("responsable") || null,
       echeance: value("echeance") || null,
+      responsable_user_id: value("responsable_user_id") ? Number(value("responsable_user_id")) : null,
     };
     const submit = form.querySelector('button[type="submit"]');
     submit.disabled = true;
@@ -64,8 +65,23 @@ function openActionDialog(uai, action = null) {
   form.elements.description.value = action?.description || "";
   form.elements.responsable.value = action?.responsable || "";
   form.elements.echeance.value = action?.echeance || "";
+  const assignee = form.elements.responsable_user_id;
+  fillSelect(assignee, { "": "— Personne —" }, "");
   document.getElementById("action-dialog").showModal();
   form.elements.titre.focus();
+  loadAssignables(uai, assignee, action?.responsable_user_id);
+}
+
+// Admins and the school's referents (GET /actions/assignables).
+async function loadAssignables(uai, select, current) {
+  try {
+    const people = await getJson(`/actions/assignables?uai=${encodeURIComponent(uai)}`);
+    const options = { "": "— Personne —" };
+    people.forEach((p) => { options[String(p.id)] = `${p.username} (${p.role === "admin" ? "administrateur" : "référent"})`; });
+    fillSelect(select, options, current ? String(current) : "");
+  } catch (error) {
+    select.title = `Liste indisponible : ${error.message}`;
+  }
 }
 
 async function afterActionChange(uai) {
@@ -98,11 +114,27 @@ function actionCard(action, uai, editable) {
   if (action.echeance) {
     tags.append(element("span", action.en_retard ? "late" : "", `${action.en_retard ? "En retard · " : "Échéance · "}${frDate(action.echeance)}`));
   }
+  if (action.responsable_username) tags.append(element("span", "assignee", `Assignée à ${action.responsable_username}`));
   if (action.responsable) tags.append(element("span", "", action.responsable));
   card.append(tags);
+  const comment = action.dernier_commentaire;
+  if (comment) {
+    const quote = element("blockquote", "last-comment");
+    quote.append(
+      element("p", "", comment.texte),
+      element("small", "", `${comment.author_username}, ${frDateTime(comment.created_at)}`)
+    );
+    card.append(quote);
+  }
 
+  const buttons = element("div", "card-buttons");
+  const historyButton = element("button", "", "Historique");
+  historyButton.type = "button";
+  historyButton.setAttribute("aria-label", `Historique et commentaires de « ${action.titre} »`);
+  historyButton.addEventListener("click", () => openHistory(action, uai, editable));
+  buttons.append(historyButton);
+  card.append(buttons);
   if (editable) {
-    const buttons = element("div", "card-buttons");
     const edit = element("button", "", "Modifier");
     edit.type = "button";
     edit.addEventListener("click", () => openActionDialog(uai, action));
@@ -121,9 +153,123 @@ function actionCard(action, uai, editable) {
       }
     });
     buttons.append(remove);
-    card.append(buttons);
   }
   return card;
+}
+
+// ---- history and comments --------------------------------------------------------------
+const FIELD_LABELS = {
+  titre: "Titre", description: "Description", alea: "Aléa", priorite: "Priorité", statut: "Statut",
+  responsable: "Responsable", echeance: "Échéance", assigne: "Assignée à",
+};
+let historyState = null; // { action, uai, editable, changed }
+
+function frDateTime(iso) {
+  return new Date(iso).toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" });
+}
+
+function fieldValue(field, value) {
+  if (value == null || value === "") return "—";
+  if (field === "alea") return ACTION_HAZARDS[value] || value;
+  if (field === "priorite") return ACTION_PRIORITIES[value] || value;
+  if (field === "statut") return STATUS_LABELS[value] || value;
+  if (field === "echeance") return frDate(value);
+  return value;
+}
+
+function historyItem(event) {
+  const item = element("li", `history-item history-${event.kind}`);
+  const head = element("div", "history-head");
+  const what = { creation: "a créé l’action", modification: "a modifié", commentaire: "a commenté" }[event.kind] || event.kind;
+  head.append(element("strong", "", event.author_username), document.createTextNode(` ${what} · `), element("time", "", frDateTime(event.created_at)));
+  item.append(head);
+  if (event.kind === "modification" && event.changes) {
+    // Backfilled from the audit log: only the field names were kept.
+    const unknown = event.changes.every((c) => c.avant == null && c.apres == null);
+    if (unknown) {
+      item.append(element("p", "muted small", `${event.changes.map((c) => FIELD_LABELS[c.champ] || c.champ).join(", ")} (anciennes valeurs non conservées)`));
+    } else {
+      const list = element("ul", "history-changes");
+      event.changes.forEach((c) => {
+        list.append(element("li", "", `${FIELD_LABELS[c.champ] || c.champ} : ${fieldValue(c.champ, c.avant)} → ${fieldValue(c.champ, c.apres)}`));
+      });
+      item.append(list);
+    }
+  }
+  if (event.kind === "commentaire") {
+    item.append(element("p", "history-comment", event.texte));
+    if (event.deletable) {
+      const remove = element("button", "ppms-delete", "Supprimer");
+      remove.type = "button";
+      remove.addEventListener("click", async () => {
+        if (!window.confirm("Supprimer ce commentaire ? La suppression reste tracée dans le journal d’audit.")) return;
+        remove.disabled = true;
+        try {
+          await apiRequest(`/actions/${historyState.action.id}/commentaires/${event.id}`, { method: "DELETE" });
+          historyState.changed = true;
+          await loadHistory();
+        } catch (error) {
+          remove.disabled = false;
+          window.alert(error.message);
+        }
+      });
+      item.append(remove);
+    }
+  }
+  return item;
+}
+
+async function loadHistory() {
+  const list = document.getElementById("history-list");
+  try {
+    const events = await getJson(`/actions/${historyState.action.id}/historique`);
+    list.replaceChildren(...(events.length ? events.map(historyItem) : [element("li", "muted small", "Aucun événement enregistré.")]));
+  } catch (error) {
+    list.replaceChildren(element("li", "ppms-error", `Historique indisponible : ${error.message}`));
+  }
+}
+
+function openHistory(action, uai, editable) {
+  historyState = { action, uai, editable, changed: false };
+  const dialog = document.getElementById("history-dialog");
+  const form = document.getElementById("comment-form");
+  document.getElementById("history-title").textContent = action.titre;
+  form.hidden = !editable; // readers read, admins and the school's referents comment
+  form.reset();
+  form.querySelector(".form-message").hidden = true;
+  document.getElementById("history-list").replaceChildren(element("li", "muted small", "Chargement…"));
+  dialog.showModal();
+  loadHistory();
+}
+
+function setupHistoryDialog() {
+  const dialog = document.getElementById("history-dialog");
+  const form = document.getElementById("comment-form");
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const message = form.querySelector(".form-message");
+    const submit = form.querySelector('button[type="submit"]');
+    submit.disabled = true;
+    message.hidden = true;
+    try {
+      await apiRequest(`/actions/${historyState.action.id}/commentaires`, {
+        method: "POST",
+        body: { texte: form.elements.texte.value },
+      });
+      form.reset();
+      historyState.changed = true;
+      await loadHistory();
+    } catch (error) {
+      message.textContent = error.message;
+      message.hidden = false;
+    } finally {
+      submit.disabled = false;
+    }
+  });
+  // The card shows the last comment: refresh the page when the dialog closes after a change.
+  dialog.addEventListener("close", () => {
+    if (historyState?.changed) afterActionChange(historyState.uai);
+  });
 }
 
 function canSeeActions(uai) {

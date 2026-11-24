@@ -320,3 +320,42 @@ def test_simulation_page(admin_page):
     expect(page.locator("#simulation-env")).to_contain_text("SRT_SEUIL_ELEVE=50")
     expect(page.locator("#simulation-changes")).to_contain_text("Aucun collège ne change de niveau")
     assert page.evaluate("thresholds.eleve") == 50  # the real thresholds are untouched
+
+
+def test_action_history_comments_and_assignment(admin_page, make_user):
+    page = admin_page
+    referent, _ = make_user("referent", [SCHOOL[0]])
+    page.goto(f"/#school/{SCHOOL[0]}")
+    page.get_by_role("button", name="Nouvelle action").click()
+    form = page.locator("#action-form")
+    form.locator("[name=titre]").fill("Commander les kits PPMS")
+    form.locator("[name=echeance]").fill("2026-01-10")
+    expect(form.locator("[name=responsable_user_id] option", has_text=referent)).to_have_count(1)
+    form.locator("[name=responsable_user_id]").select_option(label=f"{referent} (référent)")
+    form.get_by_role("button", name="Enregistrer").click()
+    card = page.locator(".action-card", has_text="Commander les kits PPMS")
+    expect(card).to_contain_text(f"Assignée à {referent}")
+
+    card.get_by_role("button", name="Modifier").click()
+    form.locator("[name=statut]").select_option("en_cours")
+    form.get_by_role("button", name="Enregistrer").click()
+
+    kits = page.locator(".action-card", has_text="Commander les kits PPMS")
+    kits.get_by_role("button", name="Historique").click()
+    dialog = page.locator("#history-dialog")
+    expect(dialog.locator(".history-item")).to_have_count(2)
+    expect(dialog.locator(".history-modification")).to_contain_text("Statut : À faire → En cours")
+    expect(dialog.locator(".history-creation")).to_contain_text("a créé l’action")
+    dialog.locator("[name=texte]").fill("Fournisseur en rupture, livraison le 10/12.")
+    dialog.get_by_role("button", name="Commenter").click()
+    expect(dialog.locator(".history-comment")).to_have_text("Fournisseur en rupture, livraison le 10/12.")
+    page.keyboard.press("Escape")  # closing refreshes the page: the card shows the comment
+    expect(kits.locator(".last-comment")).to_contain_text("Fournisseur en rupture")
+
+    page.get_by_role("button", name="Déconnexion").click()
+    login(page, *make_user("lecteur"))
+    page.goto(f"/#school/{SCHOOL[0]}")
+    kits.get_by_role("button", name="Historique").click()
+    expect(page.locator("#history-dialog .history-item")).to_have_count(3)
+    expect(page.locator("#comment-form")).to_be_hidden()  # readers read only
+    expect(page.locator("#history-dialog").get_by_role("button", name="Supprimer")).to_have_count(0)

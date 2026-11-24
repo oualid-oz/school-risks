@@ -238,6 +238,9 @@ tests/                   # pytest + TestClient, in-memory SQLite
 | PATCH | `/auth/me` | Own account: `email`, `alertes_email` (weekly digest opt-in; admins and referents) |
 | GET/POST | `/actions` | List actions (filter by `uai`, `alea`, `statut`, `priorite`, `en_retard`) or create one |
 | GET/PATCH/DELETE | `/actions/{id}` | Read, update or delete one action |
+| GET | `/actions/{id}/historique` | Timeline: creation, changes (old → new), comments; newest first |
+| POST/DELETE | `/actions/{id}/commentaires[/{event_id}]` | Comment (admins, the school's referents); delete (author or admin, audited with the text) |
+| GET | `/actions/assignables?uai=` | People an action of this school can be assigned to (`responsable_user_id`; they get an email if their alerts are on) |
 | GET | `/stats` | Risk distribution and action progress |
 | GET | `/scores/parametres` | Weights, level thresholds and clay class points in use |
 | POST | `/scores/simulation` | What-if: scores, levels and ranks with other parameters, next to today's |

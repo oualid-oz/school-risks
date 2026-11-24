@@ -793,6 +793,7 @@ async function init() {
   document.getElementById("back-button").addEventListener("click", () => { location.hash = "dashboard"; });
   setupAccountDialog(); // account.js
   setupActionDialog(); // actions.js
+  setupHistoryDialog(); // actions.js
   setupAdmin(); // admin.js
   setupSpatial(); // spatial.js
   setupAccountMenu();

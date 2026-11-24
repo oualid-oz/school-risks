@@ -121,6 +121,17 @@ main:focus, h1:focus { outline: 0; }
 .card-buttons button.danger { color: #a23d35; border-color: #f0d8d4; }
 .card-buttons button:disabled { opacity: .6; cursor: wait; }
 .closed-actions { margin-top: 14px; }
+.action-tags .assignee { background: var(--soft-green); color: var(--green-dark); }
+.last-comment { margin: 9px 0 0; padding: 7px 10px; border-left: 3px solid #cfe2d6; background: #f7faf8; border-radius: 0 6px 6px 0; }
+.last-comment p { margin: 0 0 3px; font-size: 11px; color: var(--ink); white-space: pre-wrap; }
+.last-comment small { color: var(--muted); font-size: 10px; }
+.comment-form { margin: 14px 0 6px; }
+.history-list { list-style: none; margin: 14px 0 0; padding: 0; display: grid; gap: 0; max-height: 50vh; overflow-y: auto; }
+.history-item { border-top: 1px solid #eff1ef; padding: 10px 2px; display: grid; gap: 4px; justify-items: start; }
+.history-head { font-size: 11px; color: #3f4c45; }
+.history-head time { color: var(--muted); }
+.history-changes { margin: 0; padding-left: 18px; font-size: 11px; color: #3f4c45; }
+.history-comment { margin: 0; font-size: 12px; white-space: pre-wrap; background: #f7faf8; padding: 7px 10px; border-radius: 6px; justify-self: stretch; }
 .closed-actions summary { cursor: pointer; color: var(--muted); font-size: 11px; margin-bottom: 9px; }
 /* Admin */
 .user-table { overflow-x: auto; }

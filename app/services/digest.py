@@ -26,6 +26,7 @@ from app.data.store import DataStore
 from app.models.notifications import NotificationLog
 from app.models.security import User, UserRole
 from app.models.tracking import Action, Statut
+from app.services.action_history import last_comments
 from app.services.mailer import Email, get_mailer
 from app.services.ppms import statuses as ppms_statuses
 
@@ -75,12 +76,19 @@ def collect(session: Session, store: DataStore, uais: list[str], today: date) ->
         .where(Action.echeance <= soon)
         .order_by(Action.echeance, Action.uai)
     ).all()
+    comments = last_comments(session, [a.id for a in actions])
     for a in actions:
         late = a.echeance < today
         when = f"échéance {a.echeance:%d/%m/%Y}"
         if late:
             when += f", {(today - a.echeance).days} j de retard"
-        line = Line(a.uai, names[a.uai], f"{a.titre} ({when})")
+        text = f"{a.titre} ({when})"
+        comment = comments.get(a.id)
+        if late and comment:  # why it is late, when someone said so
+            snippet = comment.texte if len(comment.texte) <= 140 else comment.texte[:139] + "…"
+            who = f"{comment.author_username} le {comment.created_at:%d/%m}"
+            text += f" — dernier commentaire de {who} : {snippet}"
+        line = Line(a.uai, names[a.uai], text)
         (digest.overdue if late else digest.due_soon).append(line)
     for uai, status in sorted(ppms_statuses(session, uais, today).items()):
         if status.statut != "a_jour":

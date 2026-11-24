@@ -75,13 +75,30 @@
           <label class="ppms-field"><span>Statut</span><select name="statut"></select></label>
           <label class="ppms-field"><span>Échéance</span><input name="echeance" type="date"></label>
         </div>
-        <label class="ppms-field"><span>Responsable</span><input name="responsable" maxlength="200" placeholder="Nom ou fonction"></label>
+        <div class="form-row">
+          <label class="ppms-field"><span>Assignée à (compte, prévenu par e-mail)</span><select name="responsable_user_id"></select></label>
+          <label class="ppms-field"><span>Responsable (texte libre)</span><input name="responsable" maxlength="200" placeholder="Nom ou fonction"></label>
+        </div>
         <p class="form-message" role="alert" hidden></p>
         <div class="alerts-buttons">
           <button type="button" data-close>Annuler</button>
           <button type="submit" class="primary">Enregistrer</button>
         </div>
       </form>
+    </dialog>
+
+    <dialog id="history-dialog" class="app-dialog wide" aria-labelledby="history-title">
+      <div class="dialog-head">
+        <h2 id="history-title">Historique</h2>
+        <button type="button" class="dialog-close" data-close aria-label="Fermer">×</button>
+      </div>
+      <form id="comment-form" class="comment-form">
+        <label class="ppms-field"><span>Ajouter un commentaire (par exemple : pourquoi l’action est en retard)</span>
+          <textarea name="texte" rows="3" maxlength="2000" required></textarea></label>
+        <p class="form-message" role="alert" hidden></p>
+        <div class="alerts-buttons"><button type="submit" class="primary">Commenter</button></div>
+      </form>
+      <ol id="history-list" class="history-list" aria-live="polite"></ol>
     </dialog>
 
     <dialog id="user-dialog" class="app-dialog wide" aria-labelledby="user-title">
