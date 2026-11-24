@@ -37,6 +37,9 @@ limiter = Limiter(
     key_func=get_remote_address,
     default_limits=[settings.rate_limit_default],
     storage_uri=settings.rate_limit_storage_uri,
+    # If Redis is unreachable, count in memory instead of failing every request (without
+    # this, a Redis outage answers 500 to everything); back to Redis when it returns.
+    in_memory_fallback_enabled=True,
 )
 
 

@@ -37,7 +37,11 @@ class Settings(BaseSettings):
     rate_limit_login: str = "5/minute"
     # "memory://" is per process and reset on restart; use e.g. "redis://host:6379"
     # (needs the `redis` package) to share limits across workers and restarts.
-    rate_limit_storage_uri: str = "memory://"
+    # REDIS_URL / KV_URL are what Vercel's Upstash integration sets.
+    rate_limit_storage_uri: str = Field(
+        default="memory://",
+        validation_alias=AliasChoices("SRT_RATE_LIMIT_STORAGE_URI", "REDIS_URL", "KV_URL"),
+    )
     # IPs of reverse proxies allowed to set X-Forwarded-For / X-Forwarded-Proto.
     # Leave empty when the API is exposed directly.
     trusted_proxies: list[str] = []
@@ -56,6 +60,12 @@ class Settings(BaseSettings):
     def _empty_is_unset(cls, value: str | None) -> str | None:
         # docker compose passes unset variables as empty strings.
         return value or None
+
+    # Error reporting (Sentry): off unless a DSN is set. SENTRY_DSN is accepted too.
+    sentry_dsn: str | None = Field(
+        default=None, validation_alias=AliasChoices("SRT_SENTRY_DSN", "SENTRY_DSN")
+    )
+    sentry_environment: str | None = None
 
     # Logging: "text" for development, "json" (one object per line) in containers.
     log_format: str = "text"

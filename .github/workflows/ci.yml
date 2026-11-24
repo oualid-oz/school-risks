@@ -46,9 +46,9 @@ jobs:
           python-version: "3.14"
           cache: pip
           cache-dependency-path: |
-            requirements.lock
+            requirements-lock.txt
             pyproject.toml
-      - run: pip install -e ".[dev]" -c requirements.lock
+      - run: pip install -e ".[dev]" -c requirements-lock.txt
       - name: Tests (SQLite + PostGIS)
         run: pytest -q -rs
       - name: Migrations match the models
@@ -82,9 +82,9 @@ jobs:
           python-version: "3.14"
           cache: pip
           cache-dependency-path: |
-            requirements.lock
+            requirements-lock.txt
             pyproject.toml
-      - run: pip install -e ".[dev]" -c requirements.lock
+      - run: pip install -e ".[dev]" -c requirements-lock.txt
       - run: python -m playwright install --with-deps chromium-headless-shell
       - name: Browser tests
         run: pytest tests/e2e -q -rs

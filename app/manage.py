@@ -184,6 +184,9 @@ def main(argv: list[str] | None = None) -> int:
     digest.add_argument("--dry-run", action="store_true", help="Build the digests, log them, send nothing")
     digest.set_defaults(func=cmd_send_digests)
     args = parser.parse_args(argv)
+    from app.core.monitoring import init_error_reporting
+
+    init_error_reporting(f"manage:{args.command}")  # e.g. a failing digest run is reported
     return args.func(args)
 
 

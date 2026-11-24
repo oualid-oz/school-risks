@@ -1,0 +1,21 @@
+# Weekly update pull requests. CI (lint, tests, browser tests, Docker) runs on each one.
+version: 2
+updates:
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    # Python packages: pyproject.toml (minimum versions) and requirements-lock.txt (pinned).
+    groups:
+      python-minor-and-patch:
+        update-types: [minor, patch]
+    open-pull-requests-limit: 5
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: monthly

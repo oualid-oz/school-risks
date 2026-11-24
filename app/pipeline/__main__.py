@@ -131,6 +131,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     if not args.verbose:
         logging.getLogger("httpx").setLevel(logging.WARNING)
+    from app.core.monitoring import init_error_reporting
+
+    init_error_reporting(f"pipeline:{args.command}")  # a failing monthly refresh is reported
     return args.func(args)
 
 

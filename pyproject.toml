@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Track natural and technological risks for the collèges of Loiret."
 readme = "README.md"
 requires-python = ">=3.12"
-# Minimum versions. The exact versions tested and deployed are in requirements.lock.
+# Minimum versions. The exact versions tested and deployed are in requirements-lock.txt.
 dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
@@ -26,6 +26,8 @@ dependencies = [
     "fastparquet>=2024.2",
     # PDF fiche per school (pure Python; with Pillow and fonttools, ~40 MB).
     "fpdf2>=2.8",
+    # Error reporting, only active when SENTRY_DSN is set.
+    "sentry-sdk>=2.20",
 ]
 
 [project.optional-dependencies]

@@ -13,7 +13,7 @@ It also tracks the follow-up actions taken for each school.
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
-pip install -e ".[dev]" -c requirements.lock   # app + pyarrow + pytest + ruff, tested versions
+pip install -e ".[dev]" -c requirements-lock.txt   # app + pyarrow + pytest + ruff, tested versions
 uvicorn app.main:app --reload
 ```
 
@@ -96,6 +96,9 @@ Only the **production branch** set in Vercel (Settings → Git) deploys to produ
 - `GET /health/ready`: database reachable, schema up to date, reference data loaded. Answers 503 otherwise. Docker's `HEALTHCHECK` uses it, so `docker compose ps` shows `unhealthy`.
 - Logs: one JSON object per line on stdout (`SRT_LOG_FORMAT=json`, the default in the image; `text` locally). Every request is logged with `method`, `path`, `status`, `duration_ms`, `client` and a `request_id`, also returned in the `X-Request-ID` header (a proxy's own `X-Request-ID` is reused). Docker rotates logs at 5 × 10 MB per container.
   `docker compose logs -f api | jq 'select(.status >= 500)'`
+- **Error alerts (Sentry)**: set `SENTRY_DSN` (or `SRT_SENTRY_DSN`) to report unhandled errors of the API, the CLI (digests, data loading) and the data pipeline. Off without it. Only errors are sent, with no performance tracing, and never personal data: request bodies (passwords, comments), tokens, cookies and client IPs are stripped before sending. `SRT_SENTRY_ENVIRONMENT` overrides the environment name (default `production`, or `vercel-production` / `vercel-preview`).
+- **Uptime**: `.github/workflows/uptime.yml` calls `/health/ready` every 15 minutes (3 attempts) once the repository variable `UPTIME_URL` is set (Settings › Secrets and variables › Actions › Variables). A failed run makes GitHub email the people watching the repository's Actions. GitHub pauses scheduled workflows after 60 days without commits.
+- **Dependencies**: Dependabot (`.github/dependabot.yml`) opens weekly pull requests for Python packages (grouped minor and patch updates, in `pyproject.toml` and `requirements-lock.txt`), and monthly ones for GitHub Actions and the Docker base image. CI runs on each.
 
 ### Backups and restore
 
@@ -116,7 +119,7 @@ Backups are `pg_dump` custom-format files of the whole database (users, actions,
 3. **e2e**: the interface in a real browser (Playwright + Chromium) against a real server and PostGIS. It covers the dashboard and map fit, the ranking toggle, a map click and an address search, the PPMS and action forms, exports, "Mon compte", the admin page and the referent restrictions, keyboard-only use, and an accessibility audit (axe-core: no serious or critical WCAG 2.1 AA issue). It fails on any JavaScript error. When it fails, screenshots and the server log are attached to the run.
 4. **docker**: builds the image, starts the whole stack with `docker compose up --wait`, logs in, calls a PostGIS endpoint and takes a backup
 
-Locally: `pip install -e ".[dev]" -c requirements.lock`, then `ruff check .` and `pytest -q`.
+Locally: `pip install -e ".[dev]" -c requirements-lock.txt`, then `ruff check .` and `pytest -q`.
 Browser tests need a disposable database (it is wiped) and Chromium:
 
 ```bash
@@ -128,13 +131,13 @@ SRT_E2E_DATABASE_URL=postgresql+psycopg://srt:srt-dev-password@127.0.0.1:5433/sc
 ### Dependencies
 
 - `pyproject.toml` declares them: `[project] dependencies` (everything the API needs; parquet files are read with fastparquet), the `parquet` extra (pyarrow: faster, used by the data pipeline) and the `dev` extra (parquet + pytest + ruff).
-- `requirements.lock` pins the exact runtime versions that were tested. Docker installs only from it, CI uses it as constraints.
+- `requirements-lock.txt` pins the exact runtime versions that were tested. Docker installs only from it, CI uses it as constraints.
 - After adding or upgrading a dependency in `pyproject.toml`, regenerate the lock in a clean virtualenv:
 
 ```bash
 python -m venv /tmp/lockenv && /tmp/lockenv/bin/pip install ".[parquet]"   # Docker needs pyarrow
 ( echo "# Generated from pyproject.toml with pip freeze (runtime only). Do not edit by hand."
-  /tmp/lockenv/bin/pip freeze --exclude school-risk-tracker ) > requirements.lock
+  /tmp/lockenv/bin/pip freeze --exclude school-risk-tracker ) > requirements-lock.txt
 ```
 
 ## Security settings (env vars, prefix `SRT_`)
@@ -145,7 +148,7 @@ python -m venv /tmp/lockenv && /tmp/lockenv/bin/pip install ".[parquet]"   # Doc
 | `SRT_BOOTSTRAP_ADMIN_USERNAME` / `SRT_BOOTSTRAP_ADMIN_PASSWORD` | Creates the first admin at startup if it does not exist (password ≥ 12 chars). |
 | `SRT_CORS_ORIGINS` | JSON list of allowed browser origins, e.g. `'["https://risques.example.fr"]'`. |
 | `SRT_RATE_LIMIT_DEFAULT` / `SRT_RATE_LIMIT_LOGIN` | Per-IP limits, default `120/minute` and `5/minute`. |
-| `SRT_RATE_LIMIT_STORAGE_URI` | `memory://` by default (per process, reset on restart). Use `redis://host:6379` with several workers (`pip install redis`). |
+| `SRT_RATE_LIMIT_STORAGE_URI` | `memory://` by default (per process, reset on restart). Use Redis with several workers or on Vercel: `redis://host:6379`, or `rediss://…` (Upstash). `REDIS_URL` / `KV_URL`, set by Vercel's Upstash integration, are used when this is not set. If Redis is unreachable, limits fall back to memory instead of failing requests. |
 | `SRT_TRUSTED_PROXIES` | JSON list of reverse-proxy IPs allowed to set `X-Forwarded-For`, e.g. `'["10.0.0.2"]'`. Needed behind a proxy, otherwise every user shares the proxy's IP for rate limiting and the audit log. |
 
 Changing a user's password revokes every token issued before the change.
@@ -205,7 +208,7 @@ app/
 migrations/              # Alembic (Postgres schema)
 pyproject.toml           # dependencies, Vercel entrypoint + build step, ruff / pytest settings
 vercel.json              # Vercel function settings (duration, excluded files)
-requirements.lock        # exact tested versions (Docker, CI)
+requirements-lock.txt        # exact tested versions (Docker, CI)
 └── api/routes/
     ├── colleges.py      # /colleges, /colleges/{uai}, /risques, /historique
     ├── secteurs.py      # /secteurs (GeoJSON with scores attached)

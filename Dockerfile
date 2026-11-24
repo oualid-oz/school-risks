@@ -5,9 +5,9 @@ FROM python:3.14-slim AS deps
 ENV PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1
 # Only the lock file: the image gets exactly the versions tested in CI, and this layer
 # stays cached until the dependencies change. The app itself runs from /app (not installed).
-COPY requirements.lock /tmp/
+COPY requirements-lock.txt /tmp/
 RUN python -m venv /venv \
-    && /venv/bin/pip install -r /tmp/requirements.lock
+    && /venv/bin/pip install -r /tmp/requirements-lock.txt
 
 FROM python:3.14-slim
 ARG BUILD_VERSION=dev
