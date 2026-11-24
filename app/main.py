@@ -23,11 +23,13 @@ from app.api.routes import (
 )
 from app.core.config import settings
 from app.core.logging import RequestLogMiddleware, configure_logging
+from app.core.monitoring import init_error_reporting
 from app.core.security import bootstrap_admin, validate_security_settings
 from app.data.store import get_store
 from app.db import init_db
 
 configure_logging(settings.log_format, settings.log_level)
+init_error_reporting("api")
 logger = logging.getLogger(__name__)
 
 

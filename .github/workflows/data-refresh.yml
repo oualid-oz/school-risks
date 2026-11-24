@@ -35,9 +35,9 @@ jobs:
           python-version: "3.14"
           cache: pip
           cache-dependency-path: |
-            requirements.lock
+            requirements-lock.txt
             pyproject.toml
-      - run: pip install -e ".[parquet]" -c requirements.lock
+      - run: pip install -e ".[parquet]" -c requirements-lock.txt
       - name: Rebuild, compare, open or update the pull request
         env:
           PUSH: "1"

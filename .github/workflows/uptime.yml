@@ -1,0 +1,31 @@
+name: Uptime
+
+# Calls the production readiness check every 15 minutes. A failed run makes GitHub email the
+# people watching the repository's Actions (Settings > Notifications). Set the repository
+# variable UPTIME_URL (Settings > Secrets and variables > Actions > Variables), e.g.
+# https://school-risks.vercel.app ; without it the job is skipped.
+# Note: GitHub pauses scheduled workflows after 60 days without commits on the repository.
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  ready:
+    if: vars.UPTIME_URL != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: GET /health/ready (3 attempts, a single slow answer is not an outage)
+        env:
+          URL: ${{ vars.UPTIME_URL }}
+        run: |
+          for attempt in 1 2 3; do
+            body=$(curl -fsS --max-time 20 "${URL%/}/health/ready") && {
+              echo "$body"; echo "### Up: $body" >> "$GITHUB_STEP_SUMMARY"; exit 0; }
+            echo "attempt $attempt failed"; sleep 20
+          done
+          echo "### Down: ${URL%/}/health/ready did not answer 200 three times" >> "$GITHUB_STEP_SUMMARY"
+          exit 1
