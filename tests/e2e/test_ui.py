@@ -239,6 +239,9 @@ def test_accessibility(page):
     page.goto("/#admin")
     expect(page.locator("#user-table table")).to_be_visible()
     problems["admin"] = _axe(page)
+    page.goto("/#simulation")
+    expect(page.locator("#simulation-top tbody tr").first).to_be_visible()
+    problems["simulation"] = _axe(page)
     page.get_by_role("button", name="Mon compte").click()
     problems["account"] = _axe(page)
     assert not any(problems.values()), json.dumps(problems, indent=1, ensure_ascii=False)
@@ -296,3 +299,24 @@ def test_account_menu_is_a_dropdown_on_phones(admin_page):
     page.set_viewport_size({"width": 1280, "height": 900})  # desktop: inline, no toggle
     expect(toggle).to_be_hidden()
     expect(page.get_by_role("button", name="Mon compte")).to_be_visible()
+
+
+def test_simulation_page(admin_page):
+    page = admin_page
+    page.get_by_role("link", name="Simulation").click()
+    expect(page.locator("#simulation-page h1")).to_have_text("Simulation")
+    summary = page.locator("#simulation-summary")
+    expect(summary.locator(".sim-card").first).to_contain_text("0")  # today's values: no change
+    expect(page.locator("#simulation-top tbody tr")).to_have_count(10)
+    expect(page.locator("#simulation-env")).to_contain_text("SRT_SEUIL_ELEVE=50")
+
+    page.get_by_label("Élevé à partir de (valeur)").fill("40")
+    expect(page.locator("#simulation-env")).to_contain_text("SRT_SEUIL_ELEVE=40")
+    expect(page.locator("#simulation-changes tbody tr").first).to_be_visible()
+    assert int(summary.locator(".sim-card strong").first.inner_text()) > 0
+    expect(page.locator("#simulation-changes")).to_contain_text("→")
+
+    page.get_by_role("button", name="Revenir aux valeurs actuelles").click()
+    expect(page.locator("#simulation-env")).to_contain_text("SRT_SEUIL_ELEVE=50")
+    expect(page.locator("#simulation-changes")).to_contain_text("Aucun collège ne change de niveau")
+    assert page.evaluate("thresholds.eleve") == 50  # the real thresholds are untouched

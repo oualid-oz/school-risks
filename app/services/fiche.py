@@ -24,6 +24,7 @@ from app.services.exports import (
     STATUT_LABELS,
     label,
 )
+from app.services.scoring import niveau
 
 FONTS = Path(__file__).resolve().parents[1] / "assets" / "fonts"
 GREEN, INK, MUTED, LINE = (24, 118, 83), (23, 35, 30), (110, 120, 114), (226, 231, 226)
@@ -33,7 +34,7 @@ MAX_ACTIONS = 25
 
 
 def level_of(score: float) -> str:
-    return "eleve" if score >= 50 else "moyen" if score >= 30 else "faible"
+    return niveau(score)  # same thresholds as the scores (settings)
 
 
 def fr_date(day: date | None) -> str:

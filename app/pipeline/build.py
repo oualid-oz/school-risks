@@ -14,7 +14,7 @@ import pandas as pd
 
 from app.core.config import settings
 from app.data.schema import HISTORY_SCHEMA, RISQUES_SCHEMA
-from app.pipeline import education, georisques
+from app.pipeline import education, georisques, sectors
 from app.pipeline.client import Fetcher
 from app.pipeline.geo import haversine_km, nearest_centrale
 from app.services.scoring import compute_risk_profile
@@ -54,6 +54,7 @@ class BuildResult:
     risques: pd.DataFrame
     history: pd.DataFrame
     notes: list[str] = field(default_factory=list)
+    secteurs: dict[str, Any] | None = None  # None: keep the published sectors file
 
 
 def _typed(rows: list[dict[str, Any]], schema: dict[str, str]) -> pd.DataFrame:
@@ -166,9 +167,13 @@ def build(
             }
         )
     notes.append(f"Carried over from the previous file (no public source): {CARRIED_OVER}")
+
+    logger.info("Downloading the catchment sectors (Département du Loiret)")
+    secteurs = sectors.fetch(fetcher)
+    notes.append(f"Sectors refreshed from the Département du Loiret ({len(secteurs['features'])} sectors).")
     if keep:
         notes.append(f"Kept from the previous file on request (--keep): {keep}")
-    return BuildResult(_typed(rows, RISQUES_SCHEMA), history, notes)
+    return BuildResult(_typed(rows, RISQUES_SCHEMA), history, notes, secteurs=secteurs)
 
 
 # ---- validation ---------------------------------------------------------------
@@ -195,6 +200,9 @@ def validate(result: BuildResult, previous_risques: pd.DataFrame) -> list[str]:
         bad = r.loc[values.index[(values < low) | (values > high)], "uai"].tolist()
         if bad:
             errors.append(f"risques: {column} outside [{low}, {high}] for {bad}")
+    if result.secteurs is not None:
+        school_sectors = {s for s in r["secteur_id"].dropna() if s}
+        errors += sectors.validate(result.secteurs, school_sectors)
     if not set(r["argiles_classe"]) <= {"faible", "moyen", "fort", "non cartographié"}:
         errors.append("risques: unknown argiles_classe value")
     return errors
@@ -319,6 +327,14 @@ def render_report(
     if not diff["columns"]:
         lines.append("No changes.")
 
+    sec = diff.get("secteurs")
+    if sec is not None:
+        lines += ["", "## Catchment sectors", ""]
+        lines.append(f"- Added: {len(sec['added'])} {sec['added'] or ''}")
+        lines.append(f"- Removed: {len(sec['removed'])} {sec['removed'] or ''}")
+        changed = sec["changed"]
+        lines.append(f"- Area changed by more than 1 % or renamed: {len(changed)} {changed or ''}")
+
     h = diff.get("history")
     if h is not None:
         lines += ["", "## School-year history", ""]
@@ -335,13 +351,18 @@ def write_staging(result: BuildResult, staging: Path) -> None:
     staging.mkdir(parents=True, exist_ok=True)
     result.risques.to_parquet(staging / settings.risques_file, index=False)
     result.history.to_parquet(staging / settings.colleges_file, index=False)
+    if result.secteurs is not None:
+        (staging / settings.secteurs_file).write_text(
+            json.dumps(result.secteurs, ensure_ascii=False, separators=(",", ":")), encoding="utf-8"
+        )
 
 
 def publish(staging: Path, data_dir: Path, archive_dir: Path, stamp: str) -> Path:
     """Archive the current files, then swap in the staged ones (atomic per file)."""
     backup = archive_dir / stamp
     backup.mkdir(parents=True, exist_ok=False)
-    names = [settings.risques_file, settings.colleges_file]
+    names = [n for n in (settings.risques_file, settings.colleges_file, settings.secteurs_file)
+             if (staging / n).exists()]
     for name in names:
         if (data_dir / name).exists():
             shutil.copy2(data_dir / name, backup / name)

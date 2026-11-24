@@ -5,12 +5,45 @@ classification. Tune them with the people who own the risk data (Sprint 2 review
 """
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from datetime import date
 from typing import Any
 
 from app.core.config import settings
 
-ARGILES = {"faible": 15, "moyen": 45, "fort": 85, "non cartographié": 0}
+HAZARD_NAMES = ("inondation", "argiles", "mouvements_terrain", "industriel", "tmd", "nucleaire")
+
+
+@dataclass(frozen=True)
+class ScoringParams:
+    """What the risk referent can tune: hazard weights, level thresholds, clay class points.
+    The defaults come from the settings (SRT_WEIGHT_*, SRT_SEUIL_*, SRT_ARGILES_POINTS)."""
+
+    weights: dict[str, float] = field(default_factory=dict)
+    seuil_moyen: float = 30.0
+    seuil_eleve: float = 50.0
+    argiles_points: dict[str, float] = field(default_factory=dict)
+
+    @classmethod
+    def from_settings(cls) -> ScoringParams:
+        return cls(
+            weights={h: getattr(settings, f"weight_{h}") for h in HAZARD_NAMES},
+            seuil_moyen=settings.seuil_moyen,
+            seuil_eleve=settings.seuil_eleve,
+            argiles_points=dict(settings.argiles_points),
+        )
+
+    def as_env(self) -> dict[str, str]:
+        """The settings that would apply these parameters (to copy into the environment)."""
+        import json
+
+        env = {f"SRT_WEIGHT_{h.upper()}": f"{w:g}" for h, w in self.weights.items()}
+        env["SRT_SEUIL_MOYEN"] = f"{self.seuil_moyen:g}"
+        env["SRT_SEUIL_ELEVE"] = f"{self.seuil_eleve:g}"
+        # Compact JSON (no spaces): it can be pasted into .env or after `export` as is.
+        points = {k: round(v, 2) for k, v in self.argiles_points.items()}
+        env["SRT_ARGILES_POINTS"] = json.dumps(points, ensure_ascii=False, separators=(",", ":"))
+        return env
 
 
 def _clamp(x: float) -> float:
@@ -35,8 +68,9 @@ def score_inondation(r: dict[str, Any]) -> float:
     return _clamp(s)
 
 
-def score_argiles(r: dict[str, Any]) -> float:
-    base = ARGILES.get(r.get("argiles_classe") or "", 0)
+def score_argiles(r: dict[str, Any], points: dict[str, float] | None = None) -> float:
+    points = settings.argiles_points if points is None else points
+    base = points.get(r.get("argiles_classe") or "", 0)
     return _clamp(base + 2.0 * (r.get("nb_catnat_secheresse") or 0))
 
 
@@ -53,8 +87,10 @@ def score_industriel(r: dict[str, Any]) -> float:
 
 
 def score_tmd(r: dict[str, Any]) -> float:
-    dist_km = (r.get("distance_tmd_m") or 0) / 1000
-    s = _decay(dist_km, 0.1, 1.0)
+    meters = r.get("distance_tmd_m")
+    if meters is None:  # unknown distance: no score (not "0 m away", which scored 100)
+        return 0.0
+    s = _decay(meters / 1000, 0.1, 1.0)
     if r.get("type_tmd_proche") in {"Autoroute", "Voies ferrées"}:
         s *= 1.2
     return _clamp(s)
@@ -75,10 +111,12 @@ HAZARDS = {
 }
 
 
-def niveau(score: float) -> str:
-    if score >= 50:
+def niveau(score: float, params: ScoringParams | None = None) -> str:
+    source = params or settings
+    moyen, eleve = source.seuil_moyen, source.seuil_eleve
+    if score >= eleve:
         return "eleve"
-    if score >= 30:
+    if score >= moyen:
         return "moyen"
     return "faible"
 
@@ -98,11 +136,15 @@ def indice_priorite(score_global: float, effectif_total: int | None) -> float | 
     return round(score_global * effectif_total / 100, 1)
 
 
-def compute_risk_profile(r: dict[str, Any]) -> dict[str, Any]:
-    aleas = {name: round(fn(r), 1) for name, (fn, _) in HAZARDS.items()}
-    weights = {name: getattr(settings, w) for name, (_, w) in HAZARDS.items()}
+def compute_risk_profile(r: dict[str, Any], params: ScoringParams | None = None) -> dict[str, Any]:
+    params = params or ScoringParams.from_settings()
+    aleas = {
+        name: round(score_argiles(r, params.argiles_points) if name == "argiles" else fn(r), 1)
+        for name, (fn, _) in HAZARDS.items()
+    }
+    weights = params.weights
     total_w = sum(weights.values())
-    global_score = round(sum(aleas[h] * weights[h] for h in aleas) / total_w, 1)
+    global_score = round(sum(aleas[h] * weights[h] for h in aleas) / total_w, 1) if total_w else 0.0
 
     alertes = []
     annee = r.get("annee_dicrim")
@@ -116,7 +158,7 @@ def compute_risk_profile(r: dict[str, Any]) -> dict[str, Any]:
 
     return {
         "score_global": global_score,
-        "niveau": niveau(global_score),
+        "niveau": niveau(global_score, params),
         "alea_principal": max(aleas, key=aleas.get),
         "aleas": aleas,
         "indice_priorite": indice,

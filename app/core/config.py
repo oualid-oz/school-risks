@@ -71,6 +71,18 @@ class Settings(BaseSettings):
     weight_tmd: float = 1.0
     weight_nucleaire: float = 1.2
 
+    # Level thresholds on the global score: faible < moyen <= ... < eleve <= 100.
+    seuil_moyen: float = 30.0
+    seuil_eleve: float = 50.0
+    # Points of each clay exposure class (Géorisques map), before the drought CatNat bonus.
+    argiles_points: dict[str, float] = {"faible": 15.0, "moyen": 45.0, "fort": 85.0, "non cartographié": 0.0}
+
+    @model_validator(mode="after")
+    def _check_scoring(self) -> "Settings":
+        if not 0 < self.seuil_moyen < self.seuil_eleve <= 100:
+            raise ValueError("Need 0 < SRT_SEUIL_MOYEN < SRT_SEUIL_ELEVE <= 100")
+        return self
+
     # A DICRIM older than this (years) is flagged as outdated.
     dicrim_max_age_years: int = 10
 

@@ -28,6 +28,7 @@
         </button>
         <div id="account-menu" class="account-menu">
           <span id="account-name"></span>
+          <a id="simulation-link" class="nav-link" href="#simulation">Simulation</a>
           <a id="admin-link" class="nav-link" href="#admin" hidden>Utilisateurs</a>
           <button id="account-button" type="button">Mon compte</button>
           <button id="logout-button" type="button">Déconnexion</button>
@@ -201,6 +202,38 @@
         <p class="disclaimer">Les scores sont des indicateurs de priorisation et ne constituent pas une classification officielle.</p>
       </section>
 
+      <section id="simulation-page" class="view" hidden>
+        <div class="page-heading">
+          <div>
+            <p class="eyebrow">RÉVISION DES SCORES</p>
+            <h1>Simulation</h1>
+            <p class="subheading">Modifiez les poids, les seuils et les points des classes d’argiles : les niveaux et le classement simulés s’affichent à côté de ceux d’aujourd’hui. Rien n’est enregistré.</p>
+          </div>
+        </div>
+        <div id="simulation-error" class="error-banner" role="alert" hidden></div>
+        <div class="simulation-grid">
+          <form id="simulation-form" class="panel simulation-form" aria-label="Paramètres simulés">
+            <fieldset data-group="poids"><legend>Poids des aléas <small>(0 à 5)</small></legend></fieldset>
+            <fieldset data-group="seuils"><legend>Seuils des niveaux <small>(score global)</small></legend></fieldset>
+            <fieldset data-group="argiles"><legend>Points des classes d’argiles <small>(0 à 100)</small></legend></fieldset>
+            <label class="ppms-field"><span>Classement</span>
+              <select name="tri"><option value="score">Par score de risque</option><option value="priorite">Par élèves exposés</option></select>
+            </label>
+            <button type="button" id="simulation-reset" class="export-button">Revenir aux valeurs actuelles</button>
+          </form>
+          <div class="simulation-results" aria-live="polite">
+            <div id="simulation-summary" class="simulation-summary"></div>
+            <section class="panel detail-panel"><h2>Top 10</h2><div id="simulation-top"></div></section>
+            <section class="panel detail-panel"><h2 id="simulation-changes-title">Changements de niveau</h2><div id="simulation-changes"></div></section>
+            <section class="panel detail-panel">
+              <h2>Pour appliquer ces paramètres</h2>
+              <p class="panel-caption">Les reporter dans les variables d’environnement (Vercel ou <code>.env</code>), puis redémarrer ou redéployer. Pensez à faire valider le nouveau classement avant.</p>
+              <pre id="simulation-env" class="env-block"></pre>
+            </section>
+          </div>
+        </div>
+      </section>
+
       <section id="admin-page" class="view" hidden>
         <div class="page-heading">
           <div><p class="eyebrow">ADMINISTRATION</p><h1>Utilisateurs</h1></div>
@@ -226,5 +259,6 @@
     <script src="/account.js" defer></script>
     <script src="/admin.js" defer></script>
     <script src="/spatial.js" defer></script>
+    <script src="/simulation.js" defer></script>
   </body>
 </html>

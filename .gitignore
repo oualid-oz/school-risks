@@ -29,6 +29,7 @@ data/raw/
 data/staging/
 data/archive/
 data/.*.tmp
+docs/
 
 # Database backups
 backups/*

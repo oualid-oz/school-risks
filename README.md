@@ -166,13 +166,18 @@ Publishing copies the previous files to `data/archive/<timestamp>/` first. To ro
 Raw API responses are cached in `data/raw/<date>/`, so a re-run the same day (or `--offline`) needs no network.
 On Postgres, publishing also reloads the PostGIS reference tables. Restart the API after publishing: it loads the data once at startup.
 
+**Monthly refresh** (`.github/workflows/data-refresh.yml`, 2nd of each month, or by hand from the Actions tab): runs `deploy/data_refresh.sh`, which rebuilds and validates the data. If a file changed, it pushes a `data-refresh/YYYY-MM` branch and opens or updates a pull request whose description is the change report. Nothing reaches production before someone merges it. On merge, the Vercel build reloads the reference tables, because their fingerprint (`reference_load` table) no longer matches the files, and Docker reloads them at every deploy.
+With the default token, GitHub does not run CI on a pull request opened by a workflow. Add a `DATA_REFRESH_TOKEN` secret (fine-grained token with contents and pull-requests write) to get CI on it.
+To try it locally without git: `deploy/data_refresh.sh` (it publishes into `data/`).
+
 | Column(s) | Source |
 |---|---|
 | statut, history (enrolment, REP/REP+, IPS, DNB, value added) | data.education.gouv.fr: annuaire, effectifs, IPS (3 datasets), DNB par établissement, IVAC |
 | argiles_classe, cavities, ground movements, CatNat, DICRIM, ICPE / Seveso | Géorisques API v1 |
 | dans_ppri, ppri | IGN GPU API (servitude PM1) |
 | distance_centrale_km, centrale_proche | Static plant coordinates in `app/pipeline/geo.py` |
-| secteur_id + sector polygons, TMD columns, distance_repere_crue_km | **Not refreshed**: no public point API, copied from the published file |
+| Sector polygons (`colleges_secteurs.geojson`) | Département du Loiret, ArcGIS service of its GIS (also on data.gouv.fr), outlines generalised to ≈10 m by the service |
+| TMD columns, distance_repere_crue_km | **Not refreshed**: no usable public source yet, copied from the published file (see docs/roadmap.md, Sprint 14) |
 
 The list of schools, their names and positions come from the published file (the roster). The report flags schools that are new or closed in the directory, and positions that differ by more than 200 m.
 
@@ -234,6 +239,8 @@ tests/                   # pytest + TestClient, in-memory SQLite
 | GET/POST | `/actions` | List actions (filter by `uai`, `alea`, `statut`, `priorite`, `en_retard`) or create one |
 | GET/PATCH/DELETE | `/actions/{id}` | Read, update or delete one action |
 | GET | `/stats` | Risk distribution and action progress |
+| GET | `/scores/parametres` | Weights, level thresholds and clay class points in use |
+| POST | `/scores/simulation` | What-if: scores, levels and ranks with other parameters, next to today's |
 
 ## Risk score (to validate)
 
@@ -246,8 +253,15 @@ Each hazard gets a score from 0 to 100, computed in `services/scoring.py`:
 - **tmd** (hazardous-materials transport): distance to the route, heavier for motorways and railways
 - **nucleaire** (nuclear): distance to the nearest plant
 
-The global score is a weighted average. You can change the weights with env vars, for example `SRT_WEIGHT_INONDATION=2`.
-The level is `faible` below 30, `moyen` from 30 to 49 and `eleve` from 50.
+The global score is a weighted average. Everything below is a setting, so the outcome of a review is applied without code changes (set the variables, then restart or redeploy):
+
+| Setting | Default | |
+|---|---|---|
+| `SRT_WEIGHT_INONDATION`, `_ARGILES`, `_MOUVEMENTS_TERRAIN`, `_INDUSTRIEL`, `_TMD`, `_NUCLEAIRE` | 1.5, 1, 1, 1.2, 1, 1.2 | Weights (normalised) |
+| `SRT_SEUIL_MOYEN`, `SRT_SEUIL_ELEVE` | 30, 50 | Level thresholds: `faible` below the first, `eleve` from the second |
+| `SRT_ARGILES_POINTS` | `{"faible":15,"moyen":45,"fort":85,"non cartographié":0}` | Points of each clay exposure class |
+
+The **Simulation** page (`#simulation`, `POST /scores/simulation`) recomputes every school with other values and shows, next to today's, the levels, the top 10 and the schools changing level, then the exact variables to set. Nothing is saved. The map colours, the legend, the PDF and the email digests all follow the configured thresholds.
 With the current thresholds the 70 schools split into 30 faible, 29 moyen and 11 eleve.
 
 ### Priority index (pupils exposed)
