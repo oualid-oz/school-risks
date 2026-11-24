@@ -6,12 +6,14 @@
     <meta name="theme-color" content="#f5f7f4">
     <title>Risques scolaires | Loiret</title>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png">
     <link rel="preconnect" href="https://unpkg.com">
     <link rel="preconnect" href="https://tile.openstreetmap.org">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
     <link rel="stylesheet" href="/styles.css">
   </head>
   <body>
+    <a class="skip-link" href="#contenu">Aller au contenu</a>
     <header class="topbar">
       <a class="brand" href="#dashboard" aria-label="Tableau de bord">
         <img class="brand-mark" src="/favicon.svg" alt="" width="40" height="40">
@@ -19,10 +21,17 @@
       </a>
       <span class="data-badge"><span class="live-dot"></span> Données de référence</span>
       <div id="account-controls" class="account-controls" hidden>
-        <span id="account-name"></span>
-        <a id="admin-link" class="nav-link" href="#admin" hidden>Utilisateurs</a>
-        <button id="account-button" type="button">Mon compte</button>
-        <button id="logout-button" type="button">Déconnexion</button>
+        <!-- Phones: the items below collapse into a dropdown opened by this button. -->
+        <button id="account-menu-toggle" class="menu-toggle" type="button" aria-expanded="false" aria-controls="account-menu" aria-label="Menu du compte">
+          <span class="menu-initial" aria-hidden="true"></span>
+          <span class="menu-bars" aria-hidden="true"></span>
+        </button>
+        <div id="account-menu" class="account-menu">
+          <span id="account-name"></span>
+          <a id="admin-link" class="nav-link" href="#admin" hidden>Utilisateurs</a>
+          <button id="account-button" type="button">Mon compte</button>
+          <button id="logout-button" type="button">Déconnexion</button>
+        </div>
       </div>
     </header>
 
@@ -111,7 +120,7 @@
       </form>
     </dialog>
 
-    <main>
+    <main id="contenu" tabindex="-1">
       <section id="login-screen" class="view login-view">
         <form id="login-form" class="auth-card">
           <p class="eyebrow">ACCÈS SÉCURISÉ</p>
@@ -155,7 +164,14 @@
               <div><p class="eyebrow">CARTOGRAPHIE</p><h2>Secteurs et établissements</h2></div>
               <span id="map-count" class="muted small">Chargement…</span>
             </div>
-            <div id="map" role="application" aria-label="Carte des secteurs et collèges du Loiret"></div>
+            <form id="address-form" class="address-form" role="search" autocomplete="off">
+              <label for="address-input" class="visually-hidden">Adresse</label>
+              <input id="address-input" type="search" placeholder="Une adresse du Loiret : secteur et collèges proches" aria-describedby="address-hint" aria-controls="address-results" aria-autocomplete="list">
+              <button type="submit">Chercher</button>
+              <ul id="address-results" class="address-results" role="listbox" aria-label="Adresses trouvées" hidden></ul>
+            </form>
+            <p id="address-hint" class="map-hint">Ou cliquez sur la carte. Les adresses sont recherchées dans la Base adresse nationale (api-adresse.data.gouv.fr).</p>
+            <div id="map" role="application" aria-label="Carte des secteurs et collèges du Loiret. Cliquez pour connaître le secteur et les collèges proches d’un point."></div>
             <div class="map-legend" aria-label="Légende des scores de risque">
               <span><i class="legend-dot low"></i> Faible <small>0–29</small></span>
               <span><i class="legend-dot medium"></i> Modéré <small>30–49</small></span>
@@ -163,6 +179,7 @@
               <span><i class="legend-dot unknown"></i> Sans donnée</span>
               <span id="legend-size" hidden><i class="legend-size" aria-hidden="true"></i> Taille : élèves exposés × risque</span>
             </div>
+            <div id="point-panel" class="point-panel" aria-live="polite" hidden></div>
           </section>
 
           <aside class="panel schools-panel">
@@ -208,5 +225,6 @@
     <script src="/actions.js" defer></script>
     <script src="/account.js" defer></script>
     <script src="/admin.js" defer></script>
+    <script src="/spatial.js" defer></script>
   </body>
 </html>

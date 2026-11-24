@@ -61,11 +61,12 @@ CSV for French Excel (schools, actions), protected against formula injection. On
 - Fixed: a referent could not open the page of a school they do not follow (the page also loaded that school's actions, which answer 403); the page now loads and says the actions are reserved.
 - Checked in a headless browser (Playwright): admin creates a referent, action create/edit/close/delete, password change, referent restrictions, no JavaScript errors.
 
-### ⏭ Sprint 13: Browser tests and the map
-- Playwright tests in CI: login, ranking toggle, PPMS and action forms, alert dialog, exports, map fit on first load.
-- Map: click a point to see its sector and schools; "collèges à proximité" (the PostGIS endpoints exist).
-- PNG `apple-touch-icon`; accessibility pass (keyboard, labels, contrast).
-- **Done when:** CI fails if a screen breaks, and the spatial features are usable without the API.
+### ✅ Sprint 13: Browser tests and the map
+- `tests/e2e`: 16 Playwright tests against a real server on a fresh PostGIS database, in a new CI job (screenshots and server log attached on failure). They fail on any JavaScript error.
+- Map: click a point or search an address (Base adresse nationale, Loiret only) to see its sector, the school(s) serving it and the schools within 5 km.
+- Accessibility: axe-core audit in CI (no serious or critical WCAG 2.1 AA issue on login, dashboard, school, admin, account). 15 text colours darkened to reach 4.5:1. Skip link, visible keyboard focus, the focus moves to the new page's title after navigation, and keyboard-only use is tested.
+- PNG `apple-touch-icon` rendered from the favicon.
+- Fixed: the sector polygons' popup read a field that does not exist and always showed "Secteur {id}"; it is now a hover tooltip with the sector name.
 
 ### ⏭ Sprint 14: Score review and data completeness
 - Unit tests for each hazard function.
@@ -85,4 +86,4 @@ CSV for French Excel (schools, actions), protected against formula injection. On
 - Shared rate-limit store on Vercel (Upstash Redis): without it each function instance counts requests on its own.
 
 ## Order
-Sprint 13 next, so later screens are covered by browser tests. Sprint 14 depends on the risk referent's availability and can move. Sprint 15 builds on the action screens of Sprint 12.
+Sprint 14 depends on the risk referent's availability and can move. Sprint 15 builds on the action screens of Sprint 12.

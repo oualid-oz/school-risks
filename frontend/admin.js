@@ -21,6 +21,7 @@ async function showAdminPage() {
   container.replaceChildren(element("div", "empty-state", "Chargement des utilisateurs…"));
   try {
     renderUsers(await getJson("/auth/users"));
+    if (document.activeElement?.closest("#user-dialog") === null) focusViewHeading("admin-page");
   } catch (error) {
     container.replaceChildren();
     showError("admin-error", `Impossible de charger les utilisateurs : ${error.message}`);
