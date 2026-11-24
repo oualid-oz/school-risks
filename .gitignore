@@ -36,3 +36,6 @@ backups/*
 
 # Logs
 *.log
+
+# Browser test output
+tests/e2e/artifacts/

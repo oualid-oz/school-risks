@@ -136,6 +136,44 @@ function showView(id) {
   VIEWS.forEach((view) => { document.getElementById(view).hidden = view !== id; });
 }
 
+// Phones: the account items live in a dropdown (desktop shows them inline, CSS only).
+function setupAccountMenu() {
+  const toggle = document.getElementById("account-menu-toggle");
+  const menu = document.getElementById("account-menu");
+  const setOpen = (open) => {
+    menu.classList.toggle("open", open);
+    toggle.setAttribute("aria-expanded", String(open));
+  };
+  toggle.addEventListener("click", (event) => {
+    event.stopPropagation();
+    const open = !menu.classList.contains("open");
+    setOpen(open);
+    if (open) menu.querySelector("a:not([hidden]), button")?.focus();
+  });
+  // Close after choosing an item, on a click elsewhere, or with Escape.
+  menu.addEventListener("click", (event) => {
+    if (event.target.closest("a, button")) setOpen(false);
+  });
+  document.addEventListener("click", (event) => {
+    if (!event.target.closest("#account-controls")) setOpen(false);
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && menu.classList.contains("open")) {
+      setOpen(false);
+      toggle.focus();
+    }
+  });
+}
+
+// After a view change, put keyboard and screen-reader users on the new page's title
+// (otherwise the focus stays on the button that was clicked, now hidden).
+function focusViewHeading(id) {
+  const heading = document.querySelector(`#${id} h1`);
+  if (!heading) return;
+  heading.setAttribute("tabindex", "-1");
+  heading.focus({ preventScroll: false });
+}
+
 function showLogin(message = "") {
   showView("login-screen");
   document.querySelectorAll("dialog[open]").forEach((dialog) => dialog.close());
@@ -151,6 +189,7 @@ function showAccount(user) {
   document.getElementById("login-screen").hidden = true;
   document.getElementById("account-controls").hidden = false;
   document.getElementById("account-name").textContent = `${user.username} · ${user.role}`;
+  document.querySelector(".menu-initial").textContent = user.username.charAt(0).toUpperCase();
 }
 
 function renderStats(stats) {
@@ -269,16 +308,15 @@ function renderMap(geojson) {
       const score = feature.properties.score_max;
       return { color: riskColor(score), weight: 1.2, opacity: 0.9, fillColor: riskColor(score), fillOpacity: score == null ? 0.12 : 0.25 };
     },
+    // A click anywhere (polygons included) asks PostGIS for the sector and nearby schools
+    // (spatial.js); hovering a sector just names it.
     onEachFeature: (feature, layer) => {
       const props = feature.properties;
-      const popup = element("div", "map-popup");
-      popup.append(
-        element("strong", "", props.nom || `Secteur ${props.secteur_id}`),
-        element("small", "", props.score_max == null ? "Aucun collège rattaché" : `Score maximal : ${props.score_max}/100`)
-      );
-      layer.bindPopup(popup);
+      const score = props.score_max == null ? "aucun collège rattaché" : `score maximal ${props.score_max}/100`;
+      layer.bindTooltip(`${props.secteur || `Secteur ${props.secteur_id}`} · ${score}`, { sticky: true });
     },
   }).addTo(map);
+  enableMapPointSelection(); // spatial.js
 
   const markerGroup = L.featureGroup();
   schoolMarkers = [];
@@ -290,6 +328,7 @@ function renderMap(geojson) {
       weight: 2,
       fillColor: riskColor(school.score_global),
       fillOpacity: 1,
+      bubblingMouseEvents: false, // a click on a school opens its popup, not a point search
     });
     marker.bindPopup(popupContent(school));
     marker.bindTooltip(element("span", "", school.nom), { direction: "top", offset: [0, -6] });
@@ -583,7 +622,7 @@ function commentInput() {
 
 async function afterPpmsChange(uai) {
   statsStale = true;
-  await showSchoolPage(uai);
+  await showSchoolPage(uai, true);
 }
 
 function historyList(title, entries, describe, onDelete) {
@@ -698,7 +737,7 @@ async function openSchool(uai) {
   location.hash = `school/${encodeURIComponent(uai)}`;
 }
 
-async function showSchoolPage(uai) {
+async function showSchoolPage(uai, keepFocus = false) {
   showView("school-page");
   document.getElementById("school-error").hidden = true;
   document.getElementById("school-content").replaceChildren(element("div", "empty-state", "Chargement de la fiche…"));
@@ -712,6 +751,7 @@ async function showSchoolPage(uai) {
       getJson(`/colleges/${encodeURIComponent(uai)}/ppms`),
     ]);
     renderSchool(school, actions, history, ppms);
+    if (!keepFocus) focusViewHeading("school-page");
   } catch (error) {
     document.getElementById("school-content").replaceChildren();
     showError("school-error", `Impossible de charger cette fiche : ${error.message}`);
@@ -737,6 +777,15 @@ async function init() {
   setupAccountDialog(); // account.js
   setupActionDialog(); // actions.js
   setupAdmin(); // admin.js
+  setupSpatial(); // spatial.js
+  setupAccountMenu();
+  // Skip link: move the focus without touching the URL hash (the hash is the router).
+  document.querySelector(".skip-link").addEventListener("click", (event) => {
+    event.preventDefault();
+    const target = document.querySelector(".view:not([hidden]) h1") || document.getElementById("contenu");
+    if (!target.hasAttribute("tabindex")) target.setAttribute("tabindex", "-1");
+    target.focus();
+  });
   // Any [data-close] button closes its dialog.
   document.addEventListener("click", (event) => {
     const closer = event.target.closest("[data-close]");

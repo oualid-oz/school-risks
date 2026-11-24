@@ -36,6 +36,8 @@ dev = [
     "school-risk-tracker[parquet]",
     "pytest>=8",
     "ruff>=0.8",
+    # Browser tests (tests/e2e); then: python -m playwright install chromium-headless-shell
+    "playwright>=1.48",
 ]
 
 [build-system]

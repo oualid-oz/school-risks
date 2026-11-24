@@ -70,7 +70,7 @@ function openActionDialog(uai, action = null) {
 
 async function afterActionChange(uai) {
   statsStale = true; // open-actions count on the dashboard
-  await showSchoolPage(uai);
+  await showSchoolPage(uai, true);
 }
 
 async function actionRequest(button, uai, path, options) {

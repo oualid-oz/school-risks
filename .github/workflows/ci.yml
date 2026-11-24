@@ -58,8 +58,48 @@ jobs:
           alembic upgrade head
           alembic check
 
+  e2e:
+    # The interface in a real browser (Playwright, Chromium) against a real server and PostGIS.
+    runs-on: ubuntu-latest
+    services:
+      postgis:
+        image: postgis/postgis:17-3.5
+        env:
+          POSTGRES_DB: school_risks_e2e
+          POSTGRES_USER: srt
+          POSTGRES_PASSWORD: ci-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U srt -d school_risks_e2e"
+          --health-interval 5s --health-timeout 3s --health-retries 20
+    env:
+      SRT_E2E_DATABASE_URL: postgresql+psycopg://srt:ci-password@127.0.0.1:5432/school_risks_e2e
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: pip
+          cache-dependency-path: |
+            requirements.lock
+            pyproject.toml
+      - run: pip install -e ".[dev]" -c requirements.lock
+      - run: python -m playwright install --with-deps chromium-headless-shell
+      - name: Browser tests
+        run: pytest tests/e2e -q -rs
+      - name: Screenshots and server log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-artifacts
+          path: |
+            tests/e2e/artifacts/
+            tests/e2e/server.log
+          if-no-files-found: ignore
+
   docker:
-    needs: [lint, test]
+    needs: [lint, test, e2e]
     runs-on: ubuntu-latest
     # Job level, not step level: every `docker compose` command (exec, logs, down too)
     # reads the whole compose file and needs the required variables.

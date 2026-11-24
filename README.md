@@ -113,9 +113,17 @@ Backups are `pg_dump` custom-format files of the whole database (users, actions,
 `.github/workflows/ci.yml` runs on each push to `main` and each pull request:
 1. **lint**: `ruff check`
 2. **test**: pytest on SQLite and on a PostGIS service container, then `alembic check` (models and migrations agree)
-3. **docker**: builds the image, starts the whole stack with `docker compose up --wait`, logs in, calls a PostGIS endpoint and takes a backup
+3. **e2e**: the interface in a real browser (Playwright + Chromium) against a real server and PostGIS. It covers the dashboard and map fit, the ranking toggle, a map click and an address search, the PPMS and action forms, exports, "Mon compte", the admin page and the referent restrictions, keyboard-only use, and an accessibility audit (axe-core: no serious or critical WCAG 2.1 AA issue). It fails on any JavaScript error. When it fails, screenshots and the server log are attached to the run.
+4. **docker**: builds the image, starts the whole stack with `docker compose up --wait`, logs in, calls a PostGIS endpoint and takes a backup
 
 Locally: `pip install -e ".[dev]" -c requirements.lock`, then `ruff check .` and `pytest -q`.
+Browser tests need a disposable database (it is wiped) and Chromium:
+
+```bash
+psql -h 127.0.0.1 -p 5433 -U srt school_risks -c "CREATE DATABASE school_risks_e2e"
+python -m playwright install chromium-headless-shell
+SRT_E2E_DATABASE_URL=postgresql+psycopg://srt:srt-dev-password@127.0.0.1:5433/school_risks_e2e pytest tests/e2e
+```
 
 ### Dependencies
 
@@ -266,6 +274,14 @@ No open dataset lists the PPMS (safety plans), so referents record them in the a
 The school year starts on 1 September. Fire drills are recorded but do not count by default, because they follow separate fire-safety rules.
 The reasons appear in the school's risk-profile alerts, like the DICRIM alert. The dashboard shows how many schools are up to date, and `GET /colleges?ppms=` filters by status.
 ⚠️ These rules are a starting point: confirm them with whoever is responsible for safety plans, then adjust the three settings.
+
+### Around a point (map)
+
+Click the map, or search an address above it, to see:
+- the catchment sector containing the point (PostGIS `ST_Contains`) and the school(s) serving it;
+- the schools within 5 km, with their distance (`ST_DWithin`).
+
+Addresses are looked up from the browser in the Base adresse nationale (`api-adresse.data.gouv.fr`, results limited to Loiret postcodes): the typed text goes to that public service. Without PostGIS (SQLite mode) the panel says the feature is unavailable.
 
 ### Exports
 
