@@ -48,7 +48,8 @@ def test_positions_must_be_in_a_french_territory(lat, lon, inside):
 def test_missing_tmd_and_flood_markers_are_gaps_not_scores():
     row = {"distance_tmd_m": None, "distance_repere_crue_km": None, "argiles_classe": "moyen"}
     profile = compute_risk_profile(row)
-    assert profile["aleas"]["tmd"] == 0 and profile["lacunes"] == list(GAPS.values())
+    assert profile["aleas"]["tmd"] == 0
+    assert profile["lacunes"] == [GAPS["distance_tmd_m"], GAPS["distance_repere_crue_km"]]
     assert compute_risk_profile({"distance_tmd_m": 5000, "distance_repere_crue_km": 30.0})["lacunes"] == []
 
 

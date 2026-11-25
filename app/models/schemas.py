@@ -70,6 +70,17 @@ class CollegeDetail(BaseModel):
     nb_catnat_secheresse: int
     nb_catnat_mouvement_terrain: int
     annee_dicrim: int | None
+    # Hazards of part of the territory (Sprint 19); None in files published before.
+    zone_sismique: int | None = None
+    classe_radon: int | None = None
+    ddrm_feu_foret: bool | None = None
+    ppr_feu_foret: bool | None = None
+    ppr_submersion_marine: bool | None = None
+    ppr_recul_trait_cote: bool | None = None
+    nb_catnat_littoral: int | None = None
+    ddrm_avalanche: bool | None = None
+    ppr_avalanche: bool | None = None
+    nb_catnat_avalanche: int | None = None
     profil_risque: RiskProfile
 
 

@@ -56,6 +56,17 @@ college = Table(
     Column("nb_catnat_secheresse", Integer, nullable=False),
     Column("nb_catnat_mouvement_terrain", Integer, nullable=False),
     Column("annee_dicrim", Integer),
+    # Hazards of part of the territory (Sprint 19); nullable like their source columns.
+    Column("zone_sismique", Integer),
+    Column("classe_radon", Integer),
+    Column("ddrm_feu_foret", Boolean),
+    Column("ppr_feu_foret", Boolean),
+    Column("ppr_submersion_marine", Boolean),
+    Column("ppr_recul_trait_cote", Boolean),
+    Column("nb_catnat_littoral", Integer),
+    Column("ddrm_avalanche", Boolean),
+    Column("ppr_avalanche", Boolean),
+    Column("nb_catnat_avalanche", Integer),
     Column("geom", Geometry("POINT", srid=4326, spatial_index=True), nullable=False),
 )
 

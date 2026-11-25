@@ -9,7 +9,7 @@ from collections import Counter
 from typing import Any
 
 from app.data.store import DataStore
-from app.services.scoring import ScoringParams, compute_risk_profile, indice_priorite
+from app.services.scoring import POINT_SCALES, ScoringParams, compute_risk_profile, indice_priorite
 
 LEVELS = ("faible", "moyen", "eleve")
 
@@ -54,7 +54,8 @@ def simulate(store: DataStore, params: ScoringParams, tri: str = "score", top: i
         "tri": tri,
         "parametres": {
             "poids": simulated.weights, "seuil_moyen": simulated.seuil_moyen,
-            "seuil_eleve": simulated.seuil_eleve, "argiles_points": simulated.argiles_points,
+            "seuil_eleve": simulated.seuil_eleve,
+            **{scale: getattr(simulated, scale) for scale in POINT_SCALES},
         },
         "variables": simulated.as_env(),
         "resume": {

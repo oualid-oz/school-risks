@@ -15,7 +15,7 @@ from typing import Any
 import pandas as pd
 
 from app.core.config import settings
-from app.services.scoring import compute_risk_profile
+from app.services.scoring import HAZARD_NAMES, compute_risk_profile
 
 
 def department_of_insee(code_insee: str) -> str:
@@ -194,7 +194,9 @@ class DataStore:
         for r, p in zip(rows, profiles, strict=True):
             niveaux[p["niveau"]] = niveaux.get(p["niveau"], 0) + 1
             eleves[p["niveau"]] = eleves.get(p["niveau"], 0) + int(r["effectif_total"] or 0)
-        hazards = profiles[0]["aleas"].keys() if profiles else []
+        # Core hazards, then the territorial ones present at one school at least (absent: 0).
+        present = {h for p in profiles for h in p["aleas"]}
+        hazards = [h for h in HAZARD_NAMES if h in present]
         return {
             "nb_colleges": len(rows),
             "nb_eleves": int(sum(r["effectif_total"] or 0 for r in rows)),
@@ -209,7 +211,7 @@ class DataStore:
                 1 for p in profiles if any(a.startswith("DICRIM") for a in p["alertes"])
             ),
             "score_moyen_par_alea": {
-                h: round(sum(p["aleas"][h] for p in profiles) / len(profiles), 1)
+                h: round(sum(p["aleas"].get(h, 0.0) for p in profiles) / len(profiles), 1)
                 for h in hazards
             },
         }

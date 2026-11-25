@@ -14,7 +14,18 @@ RISQUES_SCHEMA: dict[str, str] = {
     "distance_repere_crue_km": "float64", "nb_catnat": "int64",
     "nb_catnat_inondations": "int64", "nb_catnat_secheresse": "int64",
     "nb_catnat_mouvement_terrain": "int64", "annee_dicrim": "Int64",
+    # Hazards of part of the territory (app/pipeline/hazards.py). Nullable: files published
+    # before Sprint 19 do not have them, and a source may not cover a commune.
+    "zone_sismique": "Int64", "classe_radon": "Int64",
+    "ddrm_feu_foret": "boolean", "ppr_feu_foret": "boolean",
+    "ppr_submersion_marine": "boolean", "ppr_recul_trait_cote": "boolean", "nb_catnat_littoral": "Int64",
+    "ddrm_avalanche": "boolean", "ppr_avalanche": "boolean", "nb_catnat_avalanche": "Int64",
 }
+
+TERRITORY_COLUMNS = (
+    "zone_sismique", "classe_radon", "ddrm_feu_foret", "ppr_feu_foret", "ppr_submersion_marine",
+    "ppr_recul_trait_cote", "nb_catnat_littoral", "ddrm_avalanche", "ppr_avalanche", "nb_catnat_avalanche",
+)
 
 HISTORY_SCHEMA: dict[str, str] = {
     "uai": "str", "nom": "str", "commune": "str", "code_insee": "str", "statut": "str",

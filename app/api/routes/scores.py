@@ -8,11 +8,15 @@ from app.api.routes.auth import limiter
 from app.core.config import settings
 from app.core.security import get_current_user
 from app.data.store import DataStore, get_store
-from app.services.scoring import HAZARD_NAMES, ScoringParams
+from app.services.scoring import HAZARD_NAMES, POINT_SCALES, ScoringParams
 from app.services.simulation import simulate
 
 router = APIRouter(prefix="/scores", tags=["scores"], dependencies=[Depends(get_current_user)])
-ARGILES_CLASSES = ("faible", "moyen", "fort", "non cartographié")
+CLASSES = {
+    "argiles_points": ("faible", "moyen", "fort", "non cartographié"),
+    "seisme_points": ("1", "2", "3", "4", "5"),
+    "radon_points": ("1", "2", "3"),
+}
 
 
 class SimulationIn(BaseModel):
@@ -22,6 +26,8 @@ class SimulationIn(BaseModel):
     seuil_moyen: float | None = Field(default=None, gt=0, lt=100)
     seuil_eleve: float | None = Field(default=None, gt=0, le=100)
     argiles_points: dict[str, float] | None = None
+    seisme_points: dict[str, float] | None = None
+    radon_points: dict[str, float] | None = None
     tri: Literal["score", "priorite"] = "score"
 
     @model_validator(mode="after")
@@ -29,11 +35,12 @@ class SimulationIn(BaseModel):
         if self.poids is not None:
             if set(self.poids) - set(HAZARD_NAMES) or any(w < 0 or w > 10 for w in self.poids.values()):
                 raise ValueError(f"poids: aléas {list(HAZARD_NAMES)}, valeurs entre 0 et 10")
-        if self.argiles_points is not None:
-            if set(self.argiles_points) - set(ARGILES_CLASSES) or any(
-                p < 0 or p > 100 for p in self.argiles_points.values()
-            ):
-                raise ValueError(f"argiles_points: classes {list(ARGILES_CLASSES)}, valeurs entre 0 et 100")
+        for scale, classes in CLASSES.items():
+            points = getattr(self, scale)
+            if points is not None and (set(points) - set(classes) or any(
+                p < 0 or p > 100 for p in points.values()
+            )):
+                raise ValueError(f"{scale}: classes {list(classes)}, valeurs entre 0 et 100")
         return self
 
     def to_params(self) -> ScoringParams:
@@ -42,7 +49,7 @@ class SimulationIn(BaseModel):
             weights={**base.weights, **(self.poids or {})},
             seuil_moyen=self.seuil_moyen if self.seuil_moyen is not None else base.seuil_moyen,
             seuil_eleve=self.seuil_eleve if self.seuil_eleve is not None else base.seuil_eleve,
-            argiles_points={**base.argiles_points, **(self.argiles_points or {})},
+            **{scale: {**getattr(base, scale), **(getattr(self, scale) or {})} for scale in POINT_SCALES},
         )
         if not params.seuil_moyen < params.seuil_eleve:
             raise ValueError("Le seuil « moyen » doit être inférieur au seuil « élevé »")
@@ -54,13 +61,13 @@ class SimulationIn(BaseModel):
 @router.get("/parametres")
 @limiter.limit(settings.rate_limit_default)
 def current_parameters(request: Request):
-    """Weights, level thresholds and clay class points in use."""
+    """Weights, level thresholds and class points (clay, earthquake zone, radon) in use."""
     params = ScoringParams.from_settings()
     return {
         "poids": params.weights,
         "seuil_moyen": params.seuil_moyen,
         "seuil_eleve": params.seuil_eleve,
-        "argiles_points": params.argiles_points,
+        **{scale: getattr(params, scale) for scale in POINT_SCALES},
     }
 
 

@@ -169,7 +169,7 @@ python -m app.pipeline build --departements all --workers 8   # all of France (b
 
 **Bulk mode** (`app/pipeline/bulk.py`). With `SRT_PIPELINE_DATABASE_URL` pointing to a scratch PostGIS database, or with `--source bulk`, the pipeline downloads the national files once instead of querying Géorisques for each school. These are the GASPAR export (CatNat, DICRIM), the ICPE file, and the cavity and ground-movement files of the departments within 1 km of a school. It loads them into a `bulk` schema and computes the indicators for every school in one SQL query. Use a separate database, never the application one: the `bulk` schema is dropped and rebuilt at every run. Two indicators remain point lookups:
 - **PPRI zone:** IGN's easements WFS answers "which flood-plan zones contain any of these schools" for 64 schools at a time. A batch is only split, down to single schools, when it contains a zone. On Loiret this gives the same plans as the GPU API.
-- **Clay exposure:** one Géorisques call per school, because the national map is 600 MB. The map changes rarely, so each month only new schools and a stable sixth of the others are re-checked; the rest keep the published value. Every school is re-checked twice a year, and `--refresh-clay` forces all of them.
+- **Clay exposure:** one Géorisques call per school, because the national map is 600 MB. The map changes rarely, so each month only new schools and a stable sixth of the others are re-checked; the rest keep the published value. Every school is re-checked twice a year. The earthquake zone and radon class of each commune follow the same rolling schedule, and `--refresh-all` forces all of them.
 
 Without the setting, `--source api` keeps the per-school calls, which is fine for a few departments.
 Local setup, using the Compose database: `psql -h 127.0.0.1 -p 5433 -U srt school_risks -c "CREATE DATABASE school_risks_pipeline"`, then `SRT_PIPELINE_DATABASE_URL=postgresql+psycopg://srt:<password>@127.0.0.1:5433/school_risks_pipeline`.
@@ -276,15 +276,29 @@ Each hazard gets a score from 0 to 100, computed in `services/scoring.py`:
 - **tmd** (hazardous-materials transport): distance to the route, heavier for motorways and railways
 - **nucleaire** (nuclear): distance to the nearest plant
 
-The global score is a weighted average. Everything below is a setting, so the outcome of a review is applied without code changes (set the variables, then restart or redeploy):
+Hazards that only exist in part of the territory (Sprint 19, `app/pipeline/hazards.py`), all per commune:
+
+- **seisme** (earthquake): the official zone, from 1 (very low) to 5 (strong). Source: Géorisques API.
+- **radon**: the potential class, from 1 to 3; in class 3, measurements are compulsory in schools. Source: Géorisques API.
+- **feu_foret** (wildfire): 70 with a wildfire prevention plan (PPRIF), 40 if the commune is only listed in the DDRM. Source: GASPAR.
+- **littoral** (coast): 60 for a marine flooding plan, plus 25 for a coastline retreat plan, plus 5 per CatNat decree for waves or tidal waves (at most 25). Source: GASPAR.
+- **avalanche**: 70 with a prevention plan, 40 if only listed in the DDRM, plus 10 per CatNat decree (at most 30). Source: GASPAR.
+
+The global score is the weighted average of the six hazards above. A territorial hazard counts only where it is present (score above 0). It then joins the average only if its score is above that average, highest first. So a hazard never lowers a score, the zeros of absent hazards dilute nothing, and a school with no territorial hazard keeps exactly its score (all of Loiret, for instance: zone 1, radon class 1, no coast or mountain). The school page and the PDF sheet show the territorial hazards that apply and the data behind them. A commune with no earthquake zone or radon class is an incomplete evaluation.
+Each run writes `distribution.md` next to the report. It has one line per department: schools per level, mean score, the number of schools each territorial hazard applies to, and the most frequent main hazard. It is the basis for the calibration review.
+
+Everything below is a setting, so the outcome of a review is applied without code changes (set the variables, then restart or redeploy):
 
 | Setting | Default | |
 |---|---|---|
 | `SRT_WEIGHT_INONDATION`, `_ARGILES`, `_MOUVEMENTS_TERRAIN`, `_INDUSTRIEL`, `_TMD`, `_NUCLEAIRE` | 1.5, 1, 1, 1.2, 1, 1.2 | Weights (normalised) |
 | `SRT_SEUIL_MOYEN`, `SRT_SEUIL_ELEVE` | 30, 50 | Level thresholds: `faible` below the first, `eleve` from the second |
 | `SRT_ARGILES_POINTS` | `{"faible":15,"moyen":45,"fort":85,"non cartographié":0}` | Points of each clay exposure class |
+| `SRT_WEIGHT_SEISME`, `_RADON`, `_FEU_FORET`, `_LITTORAL`, `_AVALANCHE` | 1.2, 0.5, 1, 1.2, 1 | Weights of the territorial hazards, used where present |
+| `SRT_SEISME_POINTS` | `{"1":0,"2":25,"3":50,"4":75,"5":100}` | Points of each earthquake zone |
+| `SRT_RADON_POINTS` | `{"1":0,"2":20,"3":60}` | Points of each radon class |
 
-The **Simulation** page (`#simulation`, `POST /scores/simulation`) recomputes every school with other values and shows, next to today's, the levels, the top 10 and the schools changing level, then the exact variables to set. Nothing is saved. The map colours, the legend, the PDF and the email digests all follow the configured thresholds.
+The **Simulation** page (`#simulation`, `POST /scores/simulation`) covers every weight and points scale. It recomputes every school with other values and shows, next to today's, the levels, the top 10 and the schools changing level, then the exact variables to set. Nothing is saved. The map colours, the legend, the PDF and the email digests all follow the configured thresholds.
 With the current thresholds the 70 schools split into 30 faible, 29 moyen and 11 eleve.
 
 ### Priority index (pupils exposed)

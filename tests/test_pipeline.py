@@ -259,11 +259,11 @@ def test_flood_plan_batches_are_split_only_where_a_zone_is_found(monkeypatch):
 def test_clay_is_rechecked_for_every_school_once_per_cycle():
     from datetime import datetime
 
-    from app.pipeline.build import CLAY_CYCLE_MONTHS, clay_due
+    from app.pipeline.build import ROLLING_CYCLE_MONTHS, rolling_due
 
     uais = [f"0{n:06d}X" for n in range(600)]
-    months = [datetime(2026, m, 2) for m in range(1, CLAY_CYCLE_MONTHS + 1)]
-    due = [{u for u in uais if clay_due(u, m)} for m in months]
+    months = [datetime(2026, m, 2) for m in range(1, ROLLING_CYCLE_MONTHS + 1)]
+    due = [{u for u in uais if rolling_due(u, m)} for m in months]
     assert set().union(*due) == set(uais)
     assert sum(len(d) for d in due) == len(uais)  # each school exactly once per cycle
     assert all(60 < len(d) < 140 for d in due)  # roughly a sixth each month

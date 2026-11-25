@@ -8,9 +8,18 @@ const SIM_HAZARDS = {
   industriel: "Industriel",
   tmd: "Transport de matières dangereuses",
   nucleaire: "Nucléaire",
+  seisme: "Séisme (là où il existe)",
+  radon: "Radon (là où il existe)",
+  feu_foret: "Feu de forêt (là où il existe)",
+  littoral: "Littoral (là où il existe)",
+  avalanche: "Avalanche (là où il existe)",
 };
+const SIM_SEISME = { 1: "Zone 1 (très faible)", 2: "Zone 2 (faible)", 3: "Zone 3 (modérée)", 4: "Zone 4 (moyenne)", 5: "Zone 5 (forte)" };
+const SIM_RADON = { 1: "Catégorie 1", 2: "Catégorie 2", 3: "Catégorie 3" };
 const SIM_CLAY = { faible: "Exposition faible", moyen: "Exposition moyenne", fort: "Exposition forte", "non cartographié": "Non cartographié" };
 const SIM_LEVELS = { faible: "Faible", moyen: "Modéré", eleve: "Élevé" };
+// Class points per scale: [form group, API field, labels].
+const SIM_SCALES = [["argiles", "argiles_points", SIM_CLAY], ["seisme", "seisme_points", SIM_SEISME], ["radon", "radon_points", SIM_RADON]];
 
 let simulationDefaults = null;
 let simulationTimer = null;
@@ -45,24 +54,27 @@ function fillSimulationForm(params) {
   const form = document.getElementById("simulation-form");
   const group = (name) => form.querySelector(`[data-group="${name}"]`);
   const keepLegend = (fieldset) => fieldset.replaceChildren(fieldset.querySelector("legend"));
-  ["poids", "seuils", "argiles"].forEach((name) => keepLegend(group(name)));
+  ["poids", "seuils", ...SIM_SCALES.map(([name]) => name)].forEach((name) => keepLegend(group(name)));
   Object.entries(SIM_HAZARDS).forEach(([key, text]) =>
     group("poids").append(numberField(`poids.${key}`, text, params.poids[key], { min: 0, max: 5, step: 0.1 })));
   group("seuils").append(
     numberField("seuil_moyen", "Modéré à partir de", params.seuil_moyen, { min: 1, max: 99, step: 1 }),
     numberField("seuil_eleve", "Élevé à partir de", params.seuil_eleve, { min: 1, max: 100, step: 1 })
   );
-  Object.entries(SIM_CLAY).forEach(([key, text]) =>
-    group("argiles").append(numberField(`argiles.${key}`, text, params.argiles_points[key] ?? 0, { min: 0, max: 100, step: 5 })));
+  SIM_SCALES.forEach(([name, field, labels]) => Object.entries(labels).forEach(([key, text]) =>
+    group(name).append(numberField(`${name}.${key}`, text, params[field]?.[key] ?? 0, { min: 0, max: 100, step: 5 }))));
 }
 
 function readSimulationForm() {
   const form = document.getElementById("simulation-form");
-  const body = { poids: {}, argiles_points: {}, tri: form.elements.tri.value };
+  const body = { poids: {}, tri: form.elements.tri.value };
+  SIM_SCALES.forEach(([, field]) => { body[field] = {}; });
   form.querySelectorAll('input[type="range"]').forEach((input) => {
     const value = Number(input.value);
-    if (input.name.startsWith("poids.")) body.poids[input.name.slice(6)] = value;
-    else if (input.name.startsWith("argiles.")) body.argiles_points[input.name.slice(8)] = value;
+    const [prefix, key] = input.name.split(".");
+    const scale = SIM_SCALES.find(([name]) => name === prefix);
+    if (prefix === "poids") body.poids[key] = value;
+    else if (scale) body[scale[1]][key] = value;
     else body[input.name] = value;
   });
   return body;

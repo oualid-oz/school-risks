@@ -17,7 +17,7 @@ from sqlalchemy.engine import Engine
 
 from app.core.config import settings
 from app.data.schema import HISTORY_SCHEMA, RISQUES_SCHEMA
-from app.pipeline import bulk, education, georisques, nuclear, sectors
+from app.pipeline import bulk, education, georisques, hazards, nuclear, sectors
 from app.pipeline.client import Fetcher
 from app.pipeline.geo import haversine_km, nearest_centrale
 from app.services.scoring import compute_risk_profile
@@ -34,14 +34,44 @@ def _department_of(row: Any) -> str:
 
 # "All of France" is mainland France and Corsica for now; overseas comes with Sprint 22.
 MAINLAND = re.compile(r"^(0[1-9]|1[0-9]|2[1-9AB]|[3-8][0-9]|9[0-5])$")
-CLAY_CYCLE_MONTHS = 6
+ROLLING_CYCLE_MONTHS = 6
 
 
-def clay_due(uai: str, now: datetime) -> bool:
-    """Bulk mode re-checks each school's clay exposure every CLAY_CYCLE_MONTHS months, a
-    stable sixth of the schools per month: the clay map changes rarely, and one call per
-    school for all of France would take half the monthly run."""
-    return zlib.crc32(uai.encode()) % CLAY_CYCLE_MONTHS == (now.year * 12 + now.month) % CLAY_CYCLE_MONTHS
+def rolling_due(key: str, now: datetime) -> bool:
+    """Bulk mode re-checks slow-changing per-point data (clay map, earthquake zoning, radon
+    classes) every ROLLING_CYCLE_MONTHS months: a stable sixth of the schools or communes
+    per month. One call each for all of France every month would take half the run."""
+    cycle = ROLLING_CYCLE_MONTHS
+    return zlib.crc32(key.encode()) % cycle == (now.year * 12 + now.month) % cycle
+
+
+def _seismic_radon(
+    fetcher: Fetcher, schools: list[dict[str, Any]], roster: pd.DataFrame, workers: int,
+    rolling: bool, now: datetime, notes: list[str],
+) -> dict[str, dict[str, Any]]:
+    """Earthquake zone and radon class per school, fetched per commune. With `rolling`, a
+    commune is only re-checked in its month, unless one of its schools has no value yet."""
+    columns = ("zone_sismique", "classe_radon")
+
+    def known(uai: str) -> dict[str, Any] | None:
+        if uai not in roster.index or not set(columns) <= set(roster.columns):
+            return None
+        values = {c: roster.loc[uai, c] for c in columns}
+        return None if any(pd.isna(v) for v in values.values()) else {c: int(v) for c, v in values.items()}
+
+    previous = {s["uai"]: known(s["uai"]) for s in schools}
+    communes = {s["code_insee"] for s in schools}
+    due = {s["code_insee"] for s in schools if previous[s["uai"]] is None} | {
+        c for c in communes if not rolling or rolling_due(c, now)
+    }
+    fetched = hazards.fetch_seismic_radon(fetcher, sorted(due), workers)
+    if len(due) < len(communes):
+        notes.append(f"Earthquake zone and radon class re-checked for {len(due)} of {len(communes)} "
+                     "communes (rolling sixth, and communes with a school not evaluated yet).")
+    return {
+        s["uai"]: fetched[s["code_insee"]] if s["code_insee"] in fetched else previous[s["uai"]]
+        for s in schools
+    }
 
 
 # Columns with no public point API. They are copied from the published file and listed
@@ -81,6 +111,8 @@ RANGES = {
     "distance_icpe_km": (0, 50),
     "distance_seveso_km": (0, 100),
     "ips": (50, 170),
+    "zone_sismique": (1, 5),
+    "classe_radon": (1, 3),
 }
 
 
@@ -109,7 +141,7 @@ def build(
     bulk_engine: Engine | None = None,
     bulk_cache: Path | None = None,
     offline: bool = False,
-    refresh_clay: bool = False,
+    refresh_all: bool = False,
 ) -> BuildResult:
     """Rebuild both tables for the collèges of ``departements`` (default: settings).
 
@@ -191,20 +223,27 @@ def build(
     history = _typed(education.build_history(schools, edu, first_year), HISTORY_SCHEMA)
     latest = history.sort_values("rentree").groupby("uai").last()
 
-    if bulk_engine is not None:
-        logger.info("Bulk mode: national files into PostGIS")
-        dl = bulk.Downloader(bulk_cache or settings.data_dir / "raw" / "bulk", offline=offline)
-        try:
+    now = datetime.now(UTC)
+    dl = bulk.Downloader(bulk_cache or settings.data_dir / "raw" / "bulk", offline=offline)
+    try:
+        if bulk_engine is not None:
+            logger.info("Bulk mode: national files into PostGIS")
             bulk.reset_schema(bulk_engine)
             loaded = bulk.load_national(bulk_engine, dl)
             nearby = bulk.departments_near(bulk_engine, schools)
             loaded |= bulk.load_departmental(bulk_engine, dl, nearby)
-        finally:
-            dl.close()
+        gaspar = dl.get("gaspar_national.zip", bulk.GASPAR_URL)  # cached when loaded above
+    finally:
+        dl.close()
+    communal = hazards.commune_hazards(gaspar, {s["code_insee"] for s in schools})
+    seismic = _seismic_radon(fetcher, schools, roster, workers,
+                             rolling=bulk_engine is not None and not refresh_all, now=now, notes=notes)
+
+    if bulk_engine is not None:
         computed = bulk.indicators(bulk_engine, schools)
-        # Clay: new schools, plus a rolling sixth of the others each month (see clay_due).
+        # Clay: new schools, plus a rolling sixth of the others each month (see rolling_due).
         due = [s for s in schools
-               if refresh_clay or s["uai"] not in roster.index or clay_due(s["uai"], datetime.now(UTC))]
+               if refresh_all or s["uai"] not in roster.index or rolling_due(s["uai"], now)]
         clay = georisques.fetch_clay(fetcher, due, workers)
         ppr = georisques.fetch_ppr_batched(fetcher, schools, workers)
         if len(due) < len(schools):
@@ -254,6 +293,8 @@ def build(
                 "dans_ppri": plan is not None,
                 "ppri": plan or "",
                 **measured,
+                **communal[s["code_insee"]],
+                **seismic[uai],
                 "distance_centrale_km": round(centrale_km, 1),
                 "centrale_proche": centrale,
                 # No public source: copied for the schools already published, unknown otherwise.
@@ -306,6 +347,8 @@ def validate(result: BuildResult, previous_risques: pd.DataFrame) -> list[str]:
     if len(outside):
         errors.append(f"risques: position outside France for {outside.tolist()}")
     for column, (low, high) in RANGES.items():
+        if column not in r:  # a file written before the column existed
+            continue
         values = r[column].dropna()
         bad = r.loc[values.index[(values < low) | (values > high)], "uai"].tolist()
         if bad:
@@ -515,6 +558,40 @@ def render_report(
         lines += [f"- **{c}**: {n} rows changed" for c, n in sorted(h["changed"].items())]
         if not h["changed"]:
             lines.append("- No changed values in existing rows.")
+    return "\n".join(lines) + "\n"
+
+
+def render_distribution(risques: pd.DataFrame, started: datetime) -> str:
+    """Levels and hazards per department, for the calibration review with risk experts:
+    where each hazard applies, and how it moves the levels."""
+    from app.services.scoring import HAZARD_NAMES, TERRITORIAL_HAZARDS
+
+    profiles = _profiles(risques)
+    rows: dict[str, list[dict[str, Any]]] = {}
+    for _, school in risques.iterrows():
+        rows.setdefault(_department_of(school), []).append(profiles[school["uai"]])
+
+    def line(name: str, items: list[dict[str, Any]]) -> str:
+        levels = [sum(1 for p in items if p["niveau"] == lvl) for lvl in ("faible", "moyen", "eleve")]
+        mean = sum(p["score_global"] for p in items) / len(items)
+        present = [sum(1 for p in items if h in p["aleas"]) for h in TERRITORIAL_HAZARDS]
+        main = {h: sum(1 for p in items if p["alea_principal"] == h) for h in HAZARD_NAMES}
+        top = max(main, key=main.get)
+        return (f"| {name} | {len(items)} | {levels[0]} | {levels[1]} | {levels[2]} | {mean:.1f} | "
+                + " | ".join(str(n) for n in present) + f" | {top} ({main[top]}) |")
+
+    everything = [p for items in rows.values() for p in items]
+    head = " | ".join(TERRITORIAL_HAZARDS)
+    lines = [
+        f"# Score distribution {started:%Y-%m-%d}", "",
+        "Per department: schools, schools per level, mean global score, schools where each "
+        "territorial hazard applies, and the most frequent main hazard. For the calibration "
+        "review; the thresholds and weights are settings (Simulation page).", "",
+        f"| Dept | Schools | Faible | Moyen | Élevé | Mean | {head} | Main hazard |",
+        "|" + "---|" * (7 + len(TERRITORIAL_HAZARDS)),
+        line("**All**", everything),
+    ]
+    lines += [line(dep, items) for dep, items in sorted(rows.items())]
     return "\n".join(lines) + "\n"
 
 

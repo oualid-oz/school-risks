@@ -22,7 +22,15 @@ from sqlmodel import Session
 
 from app.core.config import parse_departements, settings
 from app.db import is_postgres
-from app.pipeline.build import build, compare, publish, render_report, validate, write_staging
+from app.pipeline.build import (
+    build,
+    compare,
+    publish,
+    render_distribution,
+    render_report,
+    validate,
+    write_staging,
+)
 from app.pipeline.client import Fetcher
 
 logger = logging.getLogger("app.pipeline")
@@ -57,7 +65,7 @@ def cmd_build(args: argparse.Namespace) -> int:
             result = build(
                 fetcher, previous, departements=departements, first_year=args.first_year,
                 workers=args.workers, keep=args.keep, bulk_engine=bulk_engine,
-                bulk_cache=cache / "bulk", offline=args.offline, refresh_clay=args.refresh_clay,
+                bulk_cache=cache / "bulk", offline=args.offline, refresh_all=args.refresh_all,
             )
     finally:
         if bulk_engine is not None:
@@ -75,6 +83,7 @@ def cmd_build(args: argparse.Namespace) -> int:
     staging = data_dir / "staging" / stamp
     write_staging(result, staging)
     (staging / "report.md").write_text(report, encoding="utf-8")
+    (staging / "distribution.md").write_text(render_distribution(result.risques, started), encoding="utf-8")
     print(report)
     print(f"Staged files and report: {staging}")
     print(f"Raw API responses: {cache}")
@@ -143,8 +152,8 @@ def main(argv: list[str] | None = None) -> int:
         "api: one Géorisques query per school",
     )
     b.add_argument(
-        "--refresh-clay", action="store_true",
-        help="Bulk mode: re-check the clay exposure of every school (default: a sixth per month)",
+        "--refresh-all", action="store_true",
+        help="Bulk mode: re-check clay, earthquake zone and radon everywhere (default: a sixth per month)",
     )
     b.add_argument(
         "--keep",

@@ -11,7 +11,13 @@ from typing import Any
 
 from app.core.config import settings
 
-HAZARD_NAMES = ("inondation", "argiles", "mouvements_terrain", "industriel", "tmd", "nucleaire")
+# Scored everywhere (the Loiret calibration).
+CORE_HAZARDS = ("inondation", "argiles", "mouvements_terrain", "industriel", "tmd", "nucleaire")
+# Hazards of part of the territory: they only count where present (score > 0), so that the
+# zeros of a school in Beauce do not dilute its average with earthquakes and avalanches.
+TERRITORIAL_HAZARDS = ("seisme", "radon", "feu_foret", "littoral", "avalanche")
+HAZARD_NAMES = CORE_HAZARDS + TERRITORIAL_HAZARDS
+POINT_SCALES = ("argiles_points", "seisme_points", "radon_points")
 
 
 @dataclass(frozen=True)
@@ -23,6 +29,8 @@ class ScoringParams:
     seuil_moyen: float = 30.0
     seuil_eleve: float = 50.0
     argiles_points: dict[str, float] = field(default_factory=dict)
+    seisme_points: dict[str, float] = field(default_factory=dict)
+    radon_points: dict[str, float] = field(default_factory=dict)
 
     @classmethod
     def from_settings(cls) -> ScoringParams:
@@ -30,7 +38,7 @@ class ScoringParams:
             weights={h: getattr(settings, f"weight_{h}") for h in HAZARD_NAMES},
             seuil_moyen=settings.seuil_moyen,
             seuil_eleve=settings.seuil_eleve,
-            argiles_points=dict(settings.argiles_points),
+            **{scale: dict(getattr(settings, scale)) for scale in POINT_SCALES},
         )
 
     def as_env(self) -> dict[str, str]:
@@ -41,8 +49,9 @@ class ScoringParams:
         env["SRT_SEUIL_MOYEN"] = f"{self.seuil_moyen:g}"
         env["SRT_SEUIL_ELEVE"] = f"{self.seuil_eleve:g}"
         # Compact JSON (no spaces): it can be pasted into .env or after `export` as is.
-        points = {k: round(v, 2) for k, v in self.argiles_points.items()}
-        env["SRT_ARGILES_POINTS"] = json.dumps(points, ensure_ascii=False, separators=(",", ":"))
+        for scale in POINT_SCALES:
+            points = {k: round(v, 2) for k, v in getattr(self, scale).items()}
+            env[f"SRT_{scale.upper()}"] = json.dumps(points, ensure_ascii=False, separators=(",", ":"))
         return env
 
 
@@ -101,6 +110,44 @@ def score_nucleaire(r: dict[str, Any]) -> float:
     return _clamp(_decay(r.get("distance_centrale_km"), 5.0, 40.0))
 
 
+def _class_points(value: Any, points: dict[str, float]) -> float:
+    if value is None or value != value:  # None or NaN: not evaluated
+        return 0.0
+    return points.get(str(int(value)), 0.0)
+
+
+def score_seisme(r: dict[str, Any], points: dict[str, float] | None = None) -> float:
+    """Official earthquake zone of the commune (1 very low … 5 strong)."""
+    return _clamp(_class_points(r.get("zone_sismique"), settings.seisme_points if points is None else points))
+
+
+def score_radon(r: dict[str, Any], points: dict[str, float] | None = None) -> float:
+    """Radon potential class of the commune (3: measurements are compulsory in schools)."""
+    return _clamp(_class_points(r.get("classe_radon"), settings.radon_points if points is None else points))
+
+
+def score_feu_foret(r: dict[str, Any]) -> float:
+    """A wildfire prevention plan (PPRIF) on the commune, else its listing in the DDRM."""
+    if r.get("ppr_feu_foret"):
+        return 70.0
+    return 40.0 if r.get("ddrm_feu_foret") else 0.0
+
+
+def score_littoral(r: dict[str, Any]) -> float:
+    """Marine flooding and coastline retreat plans, and CatNat decrees for waves."""
+    s = 60.0 if r.get("ppr_submersion_marine") else 0.0
+    s += 25.0 if r.get("ppr_recul_trait_cote") else 0.0
+    s += min(25.0, 5.0 * (r.get("nb_catnat_littoral") or 0))
+    return _clamp(s)
+
+
+def score_avalanche(r: dict[str, Any]) -> float:
+    """An avalanche prevention plan on the commune, else its listing in the DDRM."""
+    s = 70.0 if r.get("ppr_avalanche") else 40.0 if r.get("ddrm_avalanche") else 0.0
+    s += min(30.0, 10.0 * (r.get("nb_catnat_avalanche") or 0))
+    return _clamp(s)
+
+
 HAZARDS = {
     "inondation": (score_inondation, "weight_inondation"),
     "argiles": (score_argiles, "weight_argiles"),
@@ -108,7 +155,29 @@ HAZARDS = {
     "industriel": (score_industriel, "weight_industriel"),
     "tmd": (score_tmd, "weight_tmd"),
     "nucleaire": (score_nucleaire, "weight_nucleaire"),
+    "seisme": (score_seisme, "weight_seisme"),
+    "radon": (score_radon, "weight_radon"),
+    "feu_foret": (score_feu_foret, "weight_feu_foret"),
+    "littoral": (score_littoral, "weight_littoral"),
+    "avalanche": (score_avalanche, "weight_avalanche"),
 }
+
+
+def aggregate(aleas: dict[str, float], weights: dict[str, float]) -> float:
+    """Weighted mean of the core hazards. A territorial hazard present at the school joins
+    the mean when its score is above it (highest first): adding a hazard never lowers a
+    score, and a school with no territorial hazard (all of Loiret) keeps its calibrated one."""
+    num = sum(v * weights.get(h, 0.0) for h, v in aleas.items() if h in CORE_HAZARDS)
+    den = sum(weights.get(h, 0.0) for h in aleas if h in CORE_HAZARDS)
+    mean = num / den if den else 0.0
+    territorial = sorted(((v, h) for h, v in aleas.items() if h not in CORE_HAZARDS), reverse=True)
+    for value, hazard in territorial:
+        weight = weights.get(hazard, 0.0)
+        if value <= mean or weight <= 0:
+            continue
+        num, den = num + value * weight, den + weight
+        mean = num / den
+    return round(mean, 1)
 
 
 def niveau(score: float, params: ScoringParams | None = None) -> str:
@@ -138,13 +207,15 @@ def indice_priorite(score_global: float, effectif_total: int | None) -> float | 
 
 def compute_risk_profile(r: dict[str, Any], params: ScoringParams | None = None) -> dict[str, Any]:
     params = params or ScoringParams.from_settings()
-    aleas = {
-        name: round(score_argiles(r, params.argiles_points) if name == "argiles" else fn(r), 1)
+    with_points = {"argiles": params.argiles_points, "seisme": params.seisme_points,
+                   "radon": params.radon_points}
+    scores = {
+        name: round(fn(r, with_points[name]) if name in with_points else fn(r), 1)
         for name, (fn, _) in HAZARDS.items()
     }
-    weights = params.weights
-    total_w = sum(weights.values())
-    global_score = round(sum(aleas[h] * weights[h] for h in aleas) / total_w, 1) if total_w else 0.0
+    # Territorial hazards are shown and counted only where present.
+    aleas = {h: v for h, v in scores.items() if h in CORE_HAZARDS or v > 0}
+    global_score = aggregate(aleas, params.weights)
 
     alertes = []
     annee = r.get("annee_dicrim")
@@ -174,6 +245,8 @@ GAPS = {
     "distance_repere_crue_km": (
         "Repères de crue non pris en compte dans le score inondation : pas de données pour ce territoire"
     ),
+    "zone_sismique": "Zone sismique de la commune inconnue : séisme non évalué",
+    "classe_radon": "Potentiel radon de la commune inconnu : radon non évalué",
 }
 
 
