@@ -74,3 +74,28 @@ def test_school_detail_carries_its_territory(client):
     college = client.get(f"{API}/colleges/0450003J").json()
     assert (college["departement"], college["academie"]) == ("45", "Orléans-Tours")
     assert college["profil_risque"]["lacunes"] == []
+
+
+def test_national_report_has_a_line_per_department_and_capped_lists():
+    from datetime import UTC, datetime
+
+    import pandas as pd
+
+    from app.core.config import settings
+    from app.pipeline.build import BuildResult, _capped, compare, render_report
+
+    old = pd.read_parquet(settings.data_dir / settings.risques_file)
+    history = pd.read_parquet(settings.data_dir / settings.colleges_file)
+    new = old.copy()
+    new.loc[:4, "departement"] = "18"  # pretend five schools moved to another department
+    diff = compare(new, old)
+    deps = {d["departement"]: d for d in diff["departements"]}
+    assert (deps["18"]["schools"], deps["18"]["previous"], deps["18"]["added"]) == (5, 0, 5)
+    assert (deps["45"]["schools"], deps["45"]["previous"], deps["45"]["removed"]) == (65, 70, 5)
+    assert deps["45"]["mean_score"] > 0
+
+    report = render_report(BuildResult(new, history), diff, [], datetime.now(UTC))
+    assert "## Per department" in report and "| 18 | 5 | 0 | 5 | 0 |" in report
+
+    assert _capped(list(range(25))).endswith("… (+5)")
+    assert _capped(["a", "b"]) == "a, b"

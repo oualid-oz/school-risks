@@ -11,6 +11,10 @@ on:
         description: Columns to keep from the published files (space separated), e.g. argiles_classe
         required: false
         default: ""
+      workers:
+        description: Parallel requests for the per-school calls (clay, PPRI)
+        required: false
+        default: "8"
 
 permissions:
   contents: write
@@ -23,7 +27,21 @@ concurrency:
 jobs:
   refresh:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 90
+    # Bulk mode: the national files are loaded into this throwaway PostGIS database and the
+    # indicators computed in SQL (app/pipeline/bulk.py). Nothing in it outlives the job.
+    services:
+      postgis:
+        image: postgis/postgis:17-3.5
+        env:
+          POSTGRES_USER: srt
+          POSTGRES_PASSWORD: pipeline-password
+          POSTGRES_DB: pipeline
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U srt -d pipeline"
+          --health-interval 5s --health-timeout 5s --health-retries 20
     steps:
       - uses: actions/checkout@v4
         with:
@@ -41,8 +59,10 @@ jobs:
       - name: Rebuild, compare, open or update the pull request
         env:
           PUSH: "1"
-          # Departments to build (repository variable, e.g. "45" or "45,17,74"); default Loiret.
+          # Departments to build (repository variable: "45", "45,17,74" or "all"); default Loiret.
           SRT_DEPARTEMENTS: ${{ vars.SRT_DEPARTEMENTS || '45' }}
+          SRT_PIPELINE_DATABASE_URL: postgresql+psycopg://srt:pipeline-password@127.0.0.1:5432/pipeline
+          WORKERS: ${{ github.event.inputs.workers || '8' }}
           KEEP: ${{ github.event.inputs.keep || '' }}
           BASE_BRANCH: ${{ github.event.repository.default_branch }}
           GH_TOKEN: ${{ secrets.DATA_REFRESH_TOKEN || github.token }}

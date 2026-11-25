@@ -50,12 +50,13 @@ def department_code(directory_value: str) -> str:
     return directory_value
 
 
-def fetch_directory(fetcher: Fetcher, departements: list[str]) -> list[dict[str, Any]]:
-    codes = ", ".join(f"'{directory_code(d)}'" for d in sorted(departements))
-    return _export(
-        fetcher, "fr-en-annuaire-education",
-        f"code_departement in ({codes}) and type_etablissement='Collège'",
-    )
+def fetch_directory(fetcher: Fetcher, departements: list[str] | None) -> list[dict[str, Any]]:
+    """Collèges of these departments; None: all of France (one ~10k-row export)."""
+    where = "type_etablissement='Collège'"
+    if departements is not None:
+        codes = ", ".join(f"'{directory_code(d)}'" for d in sorted(departements))
+        where = f"code_departement in ({codes}) and {where}"
+    return _export(fetcher, "fr-en-annuaire-education", where)
 
 
 def is_tracked_college(row: dict[str, Any]) -> bool:

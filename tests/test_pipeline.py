@@ -34,6 +34,8 @@ def test_fetcher_caches_retries_and_handles_empty_bodies(tmp_path):
         calls.append(str(request.url))
         if request.url.path == "/flaky" and len([c for c in calls if "flaky" in c]) == 1:
             return httpx.Response(503)
+        if request.url.path == "/garbled" and len([c for c in calls if "garbled" in c]) == 1:
+            return httpx.Response(200, content=b"# HELP jvm_threads_current")  # seen on IGN's WFS
         if request.url.path == "/empty":
             return httpx.Response(200, content=b"")
         return httpx.Response(200, json={"ok": request.url.params.get("x")})
@@ -43,6 +45,7 @@ def test_fetcher_caches_retries_and_handles_empty_bodies(tmp_path):
         assert f.get_json("https://api.test/flaky", {"x": "1"}) == {"ok": "1"}
         assert f.get_json("https://api.test/flaky", {"x": "1"}) == {"ok": "1"}  # cached
         assert f.get_json("https://api.test/empty") is None
+        assert f.get_json("https://api.test/garbled", {"x": "2"}) == {"ok": "2"}  # retried
     assert len([c for c in calls if "flaky" in c]) == 2
 
     with Fetcher(tmp_path, offline=True) as f:
@@ -175,6 +178,13 @@ def test_validation_blocks_bad_data_and_compare_reports_changes():
     errors = validate(BuildResult(half, result.history[result.history.uai.isin(half.uai)]), result.risques)
     assert any("department 45 drops from 70 to 35" in e for e in errors)
 
+    # A school just opened has no school-year figures yet; most schools without any is a broken source.
+    no_figures = result.history[result.history.uai != first]
+    one_new = validate(BuildResult(result.risques, no_figures), result.risques)
+    assert not any("history" in e for e in one_new)
+    none = validate(BuildResult(result.risques, result.history.iloc[:0]), result.risques)
+    assert any("70 schools without any school-year figures" in e for e in none)
+
 
 def test_publish_archives_previous_files_and_swaps_atomically(tmp_path):
     result = _current()
@@ -212,3 +222,48 @@ def test_snapshot_is_stored_once_per_year_and_served(client):
     assert rows[0]["effectif_total"] == store.get_college(SCHOOL)["effectif_total"]
     assert set(rows[0]["aleas"]) == set(store.get_profile(SCHOOL)["aleas"])
     assert client.get(f"{API}/colleges/0000000X/scores-annuels").status_code == 404
+
+
+# ---- bulk mode: batched flood-plan lookup, rolling clay refresh --------------------------
+class _FakeWfs:
+    """Answers like the easements WFS: the zones containing any of the batch's points."""
+
+    def __init__(self, zones: dict[tuple[float, float], str]):
+        self.zones, self.calls = zones, 0
+
+    def get_json(self, url, params):
+        import re
+
+        self.calls += 1
+        assert url == georisques.WFS_SUP
+        points = re.findall(r"\(([-\d.]+) ([-\d.]+)\)", params["CQL_FILTER"])
+        names = {self.zones[(float(lat), float(lon))] for lat, lon in points
+                 if (float(lat), float(lon)) in self.zones}
+        return {"features": [{"properties": {"nomsuplitt": n}} for n in sorted(names)]}
+
+
+def test_flood_plan_batches_are_split_only_where_a_zone_is_found(monkeypatch):
+    monkeypatch.setattr(georisques, "PPR_BATCH", 16)
+    schools = [{"uai": f"U{i:03d}", "lat": 47.0 + i / 100, "lon": 2.0} for i in range(64)]
+    inside = {schools[5]["uai"]: "PPRI du Val de Sully", schools[40]["uai"]: "PPRi Loire"}
+    fake = _FakeWfs({(s["lat"], s["lon"]): inside[s["uai"]] for s in schools if s["uai"] in inside})
+
+    out = georisques.fetch_ppr_batched(fake, schools, workers=2)
+
+    assert {u: georisques.ppri(v) for u, v in out.items() if georisques.ppri(v)} == inside
+    assert len(out) == 64
+    # 4 batches; the 2 with a zone are halved down to one school (2 × 2 × 4 queries).
+    assert fake.calls == 4 + 2 * 2 * 4
+
+
+def test_clay_is_rechecked_for_every_school_once_per_cycle():
+    from datetime import datetime
+
+    from app.pipeline.build import CLAY_CYCLE_MONTHS, clay_due
+
+    uais = [f"0{n:06d}X" for n in range(600)]
+    months = [datetime(2026, m, 2) for m in range(1, CLAY_CYCLE_MONTHS + 1)]
+    due = [{u for u in uais if clay_due(u, m)} for m in months]
+    assert set().union(*due) == set(uais)
+    assert sum(len(d) for d in due) == len(uais)  # each school exactly once per cycle
+    assert all(60 < len(d) < 140 for d in due)  # roughly a sixth each month

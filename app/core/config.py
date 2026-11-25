@@ -37,6 +37,11 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("SRT_DATABASE_URL", "DATABASE_URL"),
     )
 
+    # Data pipeline, bulk mode: a scratch PostGIS database where the national files are loaded
+    # and the indicators computed in SQL. Unset: the per-school API mode (fine for a few
+    # departments, too slow for all of France).
+    pipeline_database_url: str | None = None
+
     # Authentication and browser access.
     jwt_secret_key: str = ""
     access_token_expire_minutes: int = 30
@@ -61,9 +66,11 @@ class Settings(BaseSettings):
     def _split_departements(cls, value: object) -> object:
         return parse_departements(value) if isinstance(value, str | list) else value
 
-    @field_validator("database_url")
+    @field_validator("database_url", "pipeline_database_url")
     @classmethod
-    def _psycopg_driver(cls, url: str) -> str:
+    def _psycopg_driver(cls, url: str | None) -> str | None:
+        if not url:
+            return url
         # Providers hand out postgres:// or postgresql:// URLs; SQLAlchemy needs the driver.
         for prefix in ("postgres://", "postgresql://"):
             if url.startswith(prefix):
