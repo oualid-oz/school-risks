@@ -43,7 +43,7 @@ jobs:
           --health-cmd "pg_isready -U srt -d pipeline"
           --health-interval 5s --health-timeout 5s --health-retries 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # With the default token, the pull request does not start the CI workflow (GitHub rule).
           # Add a DATA_REFRESH_TOKEN secret (fine-grained PAT: contents + pull requests) to get CI on it.

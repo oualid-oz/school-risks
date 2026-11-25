@@ -16,7 +16,7 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v5
         with:
           python-version: "3.14"
@@ -40,7 +40,7 @@ jobs:
     env:
       SRT_TEST_DATABASE_URL: postgresql+psycopg://srt:ci-password@127.0.0.1:5432/school_risks_test
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v5
         with:
           python-version: "3.14"
@@ -76,7 +76,7 @@ jobs:
     env:
       SRT_E2E_DATABASE_URL: postgresql+psycopg://srt:ci-password@127.0.0.1:5432/school_risks_e2e
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v5
         with:
           python-version: "3.14"
@@ -110,7 +110,7 @@ jobs:
       SRT_BOOTSTRAP_ADMIN_USERNAME: ci-admin
       SRT_BOOTSTRAP_ADMIN_PASSWORD: ci-admin-password
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Start the whole stack
         run: |
           chmod 777 backups
