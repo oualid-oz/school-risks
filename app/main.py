@@ -4,6 +4,7 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
@@ -69,6 +70,8 @@ app.add_middleware(
 )
 
 app.add_middleware(RequestLogMiddleware)
+# All of France is ~3 MB of school summaries and ~12 MB of sectors: compress JSON and GeoJSON.
+app.add_middleware(GZipMiddleware, minimum_size=1024)
 
 if settings.trusted_proxies:
     # Added last so it runs first: rate limiting, request logs and the audit log

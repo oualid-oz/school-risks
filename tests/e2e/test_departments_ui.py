@@ -57,3 +57,38 @@ def test_territorial_hazards_are_explained_on_the_school_page(pilot_page):
     expect(page.locator('[data-group="seisme"] input[type="range"]')).to_have_count(5)
     expect(page.locator('[data-group="radon"] input[type="range"]')).to_have_count(3)
     expect(page.locator('[data-group="poids"]')).to_contain_text("Avalanche (là où il existe)")
+
+
+def test_national_view_opens_a_department_with_its_sectors(pilot_page):
+    page = pilot_page
+    page.locator("#territory-select").select_option("")
+    # National view: the departments, coloured by mean score; no sectors; canvas markers.
+    page.wait_for_function("departmentLayer && map.hasLayer(departmentLayer)")
+    assert page.evaluate("departmentLayer.getLayers().length") == 3
+    assert page.evaluate("sectorLayer.getLayers().length") == 0
+    assert page.evaluate("map.options.preferCanvas") is True
+    expect(page.locator("#sector-source")).to_have_count(0)
+
+    # A click on Haute-Savoie opens it: its sectors from the national school map.
+    page.evaluate("""departmentLayer.eachLayer((layer) => {
+        if (layer.feature.properties.code === '74') layer.fire('click'); })""")
+    expect(page.locator("#territory-select")).to_have_value("74")
+    expect(page.locator("#map-count")).to_have_text("75 collèges")
+    page.wait_for_function("sectorLayer.getLayers().length > 0")
+    assert page.evaluate("map.hasLayer(departmentLayer)") is False
+    expect(page.locator("#sector-source")).to_contain_text("carte scolaire nationale")
+    expect(page.locator("#sector-source")).to_contain_text("découpage approché")
+
+    page.locator("#territory-select").select_option("45")
+    # 6 collèges of neighbouring departments serve Loiret communes too: one feature each,
+    # their Loiret part from the department's map and the rest from the school map.
+    expect(page.locator("#sector-source")).to_have_text(
+        "Secteurs (59) : 53 carte des secteurs publiée par le département ; "
+        "6 carte du département et carte scolaire nationale.")
+    page.wait_for_function("sectorLayer.getLayers().length === 59")
+
+    page.locator("#territory-select").select_option("17")
+    expect(page.locator("#sector-source")).to_contain_text("aucune source pour ce département")
+
+    page.locator("#territory-select").select_option("")
+    page.wait_for_function("map.hasLayer(departmentLayer) && sectorLayer.getLayers().length === 0")

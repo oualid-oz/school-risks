@@ -194,8 +194,27 @@ To try it locally without git: `deploy/data_refresh.sh` (it publishes into `data
 | cavities, ground movements, CatNat, DICRIM, ICPE / Seveso | Géorisques API v1, or in bulk mode its download service (GASPAR national export, ICPE national CSV, cavity and ground-movement CSVs per department) |
 | dans_ppri, ppri | IGN GPU, servitude PM1: GPU API per school, or in bulk mode the easements WFS in batches |
 | distance_centrale_km, centrale_proche | The 18 nuclear power plants (`app/pipeline/nuclear.py`), positions confirmed by Géorisques |
-| Sector polygons (`colleges_secteurs.geojson`) | Département du Loiret, ArcGIS service of its GIS (also on data.gouv.fr), outlines generalised to ≈10 m by the service |
+| Sector polygons (`colleges_secteurs.geojson`) | Loiret: the department's own GIS service (also on data.gouv.fr), generalised to ≈10 m. Elsewhere, bulk mode builds them from the national school map (see below) |
 | TMD columns, distance_repere_crue_km | **Not refreshed**: no usable public source yet, copied from the published file. Flood markers: the national platform's CSV export is capped at 500 rows. TMD: no public dataset of TMD routes for Loiret |
+
+**Sectors for every department** (`app/pipeline/school_map.py`, bulk mode). No national file of sector polygons exists. Departments that publish their own map keep it (`sectors.SOURCES`: Loiret). Elsewhere, the ministry's school map (*carte scolaire des collèges publics*: which public collège serves each commune) is joined to the commune outlines (Etalab, IGN Admin Express generalised to 50 m) in PostGIS:
+- a commune served by one collège is an exact part of its sector;
+- a commune split between several collèges (described street by street, which cannot be drawn without street geometry) is shared by proximity: Voronoi cells of the collèges, clipped to the commune. Those sectors are marked approximate.
+
+A collège serving communes on both sides of a department border gets one sector, from both sources. Each sector carries its `source` and the `departements` it covers. The report shows the source of each department's sectors, and how many public collèges have none. The national file is about 12 MB, and the map loads one department at a time.
+Gaps (November 2026): the school map has nothing for 09, 12, 17, 31, 32, 46, 81 and 82, so those departments have no sectors. 2,876 of the 4,749 sectors include a shared commune.
+
+**Map at national scale.** With several departments and none selected, the map shows the departments coloured by mean score (hover: schools, high-risk schools, source of the sectors); a click opens one. The school dots are drawn on a canvas, smaller at regional zoom, and their popups are built on demand. Department outlines: `frontend/departements.geojson` (Etalab 2025, generalised to 1 km, Licence Ouverte), served as a static file. JSON responses are gzip-compressed. On a phone emulation (CPU 4× slower, fast 4G), with all of France loaded:
+
+| Action | Time |
+|---|---|
+| Login → national map | 3.8 s |
+| Zoom, national view | 0.9 s |
+| Pan, national view | 60 ms per frame |
+| Open a department | 0.4–0.6 s |
+| Zoom or pan, department view | 0.1–0.3 s |
+
+The school list is 348 KB compressed, and a department's sectors 7–40 KB.
 
 The list of schools, their names and positions come from the published file (the roster). The report flags schools that are new or closed in the directory, and positions that differ by more than 200 m.
 
@@ -244,7 +263,7 @@ tests/                   # pytest + TestClient, in-memory SQLite
 | GET | `/colleges/{uai}/risques` | Score per hazard, global score, level, alerts |
 | GET | `/colleges/{uai}/historique` | Enrolment, IPS and DNB results by year |
 | GET | `/colleges/{uai}/scores-annuels` | Risk scores stored by the yearly snapshots |
-| GET | `/secteurs?with_scores=true` | GeoJSON of the sectors, with each school's score attached |
+| GET | `/secteurs?with_scores=true&departement=` | GeoJSON of the sectors (covering part of a department), with each school's score attached |
 | GET | `/secteurs/localiser?lat=&lon=` | Sector containing a point, and its schools (PostGIS) |
 | GET | `/secteurs/{secteur_id}` | One sector polygon |
 | GET | `/colleges?ppms=a_jour\|ancien\|absent` | Filter by PPMS status (every row has `ppms_statut`) |

@@ -15,7 +15,7 @@ from app.data.schema import HISTORY_SCHEMA, RISQUES_SCHEMA
 from app.data.store import _records
 from app.models.reference import college, college_annee, reference_load, secteur
 
-SECTOR_FIELDS = ("secteur_id", "secteur", "commune", "code_insee", "departement")
+SECTOR_FIELDS = ("secteur_id", "secteur", "commune", "code_insee", "departement", "source", "departements")
 
 
 def _rows(df: pd.DataFrame) -> list[dict[str, Any]]:
@@ -96,7 +96,7 @@ def read_reference(engine: Engine) -> tuple[pd.DataFrame, pd.DataFrame, dict[str
         sector_rows = conn.execute(
             select(
                 secteur.c.secteur_id, secteur.c.secteur, secteur.c.commune,
-                secteur.c.code_insee, secteur.c.departement,
+                secteur.c.code_insee, secteur.c.departement, secteur.c.source, secteur.c.departements,
                 func.ST_AsGeoJSON(secteur.c.geom, 6).label("geometry"),
             ).order_by(secteur.c.secteur_id)
         ).mappings().all()

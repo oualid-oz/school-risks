@@ -120,3 +120,59 @@ def test_bulk_indicators_match_the_api_definitions(engine, cache):
 def test_offline_mode_never_downloads(tmp_path):
     with pytest.raises(FileNotFoundError, match="offline"):
         bulk.Downloader(tmp_path, offline=True).get("icpe.csv", bulk.ICPE_URL)
+
+
+# ---- sectors from the national school map (Sprint 20) ----------------------------------
+def test_school_map_sectors_whole_split_and_unlocated_communes(engine, tmp_path):
+    import gzip
+    import json
+
+    from app.pipeline import school_map
+
+    def square(x0: float, y0: float) -> dict:
+        ring = [[x0, y0], [x0 + 0.1, y0], [x0 + 0.1, y0 + 0.1], [x0, y0 + 0.1], [x0, y0]]
+        return {"type": "Polygon", "coordinates": [ring]}
+
+    communes = {"type": "FeatureCollection", "features": [
+        {"type": "Feature", "properties": {"code": code, "departement": dep}, "geometry": square(x, 47.0)}
+        for code, dep, x in (("74001", "74", 6.0), ("74002", "74", 6.1), ("74003", "74", 6.2),
+                             ("45001", "45", 6.3))
+    ]}
+    (tmp_path / "communes-50m.geojson.gz").write_bytes(gzip.compress(json.dumps(communes).encode()))
+    (tmp_path / "carte_scolaire.csv").write_text(
+        "code_insee;code_rne\n"
+        "74001;0740001A\n"                      # whole commune: exact
+        "74002;0740001A\n74002;0740002B\n"     # split, both located: Voronoi halves
+        "74003;0740002B\n74003;0740099Z\n"     # split, one without position: whole to each
+        "45001;0740001A\n",                    # department with its own map: left out
+        encoding="utf-8",
+    )
+    schools = [
+        {"uai": "0740001A", "lat": 47.05, "lon": 6.12, "nom": "Alpha", "commune": "Un",
+         "code_insee": "74002", "departement_nom": "Haute-Savoie"},
+        {"uai": "0740002B", "lat": 47.05, "lon": 6.18, "nom": "Bravo", "commune": "Deux",
+         "code_insee": "74002", "departement_nom": "Haute-Savoie"},
+    ]
+    dl = bulk.Downloader(tmp_path, offline=True)
+    bulk.reset_schema(engine)
+    assert school_map.load(engine, dl, schools)["communes"] == 4
+
+    features, coverage = school_map.build(engine, {s["uai"]: s for s in schools}, excluded=["45"])
+    by_id = {f["properties"]["secteur_id"]: f for f in features}
+    assert set(by_id) == {"0740001A", "0740002B", "0740099Z"}
+    alpha = by_id["0740001A"]["properties"]
+    assert alpha["secteur"] == "Alpha (Un)" and alpha["departements"] == ["74"]
+    assert alpha["source"] == "carte_scolaire_approchee"  # it shares 74002
+    assert by_id["0740099Z"]["properties"]["secteur"] == "Collège 0740099Z"  # not in our roster
+
+    with engine.connect() as conn:
+        def area(uai: str) -> float:
+            geometry = json.dumps(by_id[uai]["geometry"])
+            return conn.execute(text("SELECT ST_Area(ST_GeomFromGeoJSON(:g))"), {"g": geometry}).scalar()
+        # Alpha: all of 74001 + the western half of 74002 (closer to Alpha) = 1.5 squares.
+        assert area("0740001A") == pytest.approx(0.015, rel=0.02)
+        # Bravo: the eastern half of 74002 + all of 74003 (its partner has no position).
+        assert area("0740002B") == pytest.approx(0.015, rel=0.02)
+        assert area("0740099Z") == pytest.approx(0.010, rel=0.02)
+    assert coverage["74"] == {"sectors": 3, "approximate": 3, "communes": 3}
+    assert "45" not in coverage
