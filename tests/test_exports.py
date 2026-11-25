@@ -38,7 +38,8 @@ def test_colleges_csv_opens_in_french_excel(client):
 
 def test_colleges_csv_filters_and_is_audited(client):
     rows = read_csv(client.get(f"{API}/exports/colleges.csv", params={"niveau": "eleve"}))
-    assert {r[8] for r in rows[1:]} == {"Élevé"}
+    level = rows[0].index("Niveau")  # look columns up by name: the schema grows
+    assert {r[level] for r in rows[1:]} == {"Élevé"}
     audit = client.get(f"{API}/auth/audit").json()
     export = next(r for r in audit if r["event"] == "export.colleges_csv")
     assert '"niveau": "eleve"' in export["details"]

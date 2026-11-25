@@ -87,6 +87,12 @@ main:focus, h1:focus { outline: 0; }
 .point-school small { font-size: 10px; }
 .score-dot { font: 700 11px Manrope, sans-serif; text-align: center; border-radius: 6px; padding: 3px 0; background: #f3f5f3; }
 .point-close { grid-column: 1 / -1; justify-self: start; margin-top: 6px; border: 1px solid #e4e9e4; border-radius: 6px; background: white; color: var(--green); padding: 5px 9px; font-size: 10px; cursor: pointer; }
+/* Departments */
+.territory-select { display: inline-flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 11px; color: #3f4c45; }
+.territory-select select { height: 32px; border: 1px solid #dfe6df; border-radius: 7px; padding: 0 8px; font-size: 12px; background: white; color: var(--ink); max-width: 100%; }
+.territory-gaps { margin: 8px 0 0; padding: 7px 10px; border-radius: 7px; background: #fff8eb; color: #7a4f17; font-size: 11px; max-width: 640px; }
+.gaps-box { margin-top: 10px; padding: 10px 12px; border-radius: 7px; background: #fff8eb; color: #7a4f17; font-size: 11px; }
+.gaps-box ul { margin: 6px 0 0; padding-left: 18px; }
 /* Simulation */
 .simulation-grid { display: grid; grid-template-columns: minmax(260px, 330px) minmax(0, 1fr); gap: 16px; align-items: start; }
 .simulation-form { padding: 16px 18px; display: grid; gap: 14px; position: sticky; top: 16px; }

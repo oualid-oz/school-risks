@@ -156,6 +156,9 @@ Logins (successful and failed), action changes and user changes are written to t
 
 ## Refreshing the data
 
+**Departments.** The pipeline builds the collèges of the departments in `SRT_DEPARTEMENTS` (default `45`), or `--departements 45,17,74`. The schools come from the education directory: open collèges, public or private under contract. Schools already published keep their name, position and sector. Each school carries its department and académie, and the interface has a department selector when there are several. All of France (`all`) is refused for now: per-school API calls do not scale, see the national roadmap. For the monthly refresh, set the repository variable `SRT_DEPARTEMENTS`.
+Outside the first published department, the TMD and flood-marker data have no public source: those schools get an **incomplete evaluation** (`lacunes` in the risk profile, a warning on the dashboard and on the school page). Their scores are minima, and the hazards specific to other territories (coast, mountains, earthquakes…) are not modelled yet. **Do not publish other departments for users before that.**
+
 ```bash
 python -m app.pipeline build                          # dry run: download, rebuild, validate, report
 python -m app.pipeline build --publish --snapshot     # replace data/*.parquet, then store this year's scores
@@ -221,6 +224,8 @@ tests/                   # pytest + TestClient, in-memory SQLite
 
 | Method | Path | What it does |
 |---|---|---|
+| GET | `/territoires` | Departments in the data: code, name, académie, number of schools, and how many have an incomplete evaluation |
+| GET | `/colleges?…&departement=&limit=&offset=` | Same list filtered by department and paged (total in the `X-Total-Count` header) |
 | GET | `/colleges?commune=&statut=&secteur_id=&niveau=&q=&tri=` | List of schools, highest first: `tri=score` (default) or `tri=priorite` (pupils exposed × risk) |
 | GET | `/colleges/proches?lat=&lon=&rayon_km=5` | Schools within a radius, nearest first (PostGIS) |
 | GET | `/colleges/{uai}` | Full risk data and computed profile for one school |

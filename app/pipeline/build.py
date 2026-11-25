@@ -14,7 +14,7 @@ import pandas as pd
 
 from app.core.config import settings
 from app.data.schema import HISTORY_SCHEMA, RISQUES_SCHEMA
-from app.pipeline import education, georisques, sectors
+from app.pipeline import education, georisques, nuclear, sectors
 from app.pipeline.client import Fetcher
 from app.pipeline.geo import haversine_km, nearest_centrale
 from app.services.scoring import compute_risk_profile
@@ -23,6 +23,14 @@ logger = logging.getLogger(__name__)
 
 # Columns with no public point API. They are copied from the published file and listed
 # in the report, so whoever runs the pipeline knows they were not refreshed.
+def _department_of(row: Any) -> str:
+    value = row.get("departement") if hasattr(row, "get") else None
+    if isinstance(value, str) and value:
+        return value
+    code = str(row["code_insee"])
+    return code[:3] if code.startswith("97") else code[:2]
+
+
 CARRIED_OVER = [
     "secteur_id",
     "distance_tmd_m",
@@ -35,14 +43,26 @@ COORDINATE_DRIFT_KM = 0.2
 
 # Columns that must never be empty in colleges_risques.
 REQUIRED = [
-    "uai", "nom", "commune", "code_insee", "statut", "lat", "lon", "argiles_classe",
+    "uai", "nom", "commune", "code_insee", "statut", "departement", "lat", "lon", "argiles_classe",
     "nb_cavites_500m", "nb_mouvements_terrain_500m", "nb_icpe_1km", "distance_centrale_km",
-    "nb_catnat", "distance_tmd_m", "distance_repere_crue_km",
+    "nb_catnat",
 ]
+# Where a French collège can be: (lat min, lat max, lon min, lon max) per territory.
+TERRITORIES = {
+    "métropole et Corse": (41.3, 51.2, -5.3, 9.7),
+    "Antilles": (14.3, 18.2, -63.2, -60.7),
+    "Guyane": (2.0, 6.0, -54.7, -51.5),
+    "La Réunion": (-21.5, -20.8, 55.1, 55.9),
+    "Mayotte": (-13.1, -12.6, 44.9, 45.4),
+}
+
+
+def in_france(lat: float, lon: float) -> bool:
+    return any(a <= lat <= b and c <= lon <= d for a, b, c, d in TERRITORIES.values())
+
+
 RANGES = {
-    "lat": (46.3, 48.6),
-    "lon": (1.2, 3.3),
-    "distance_centrale_km": (0, 150),
+    "distance_centrale_km": (0, 20000),
     "distance_icpe_km": (0, 50),
     "distance_seveso_km": (0, 100),
     "ips": (50, 170),
@@ -67,71 +87,76 @@ def _typed(rows: list[dict[str, Any]], schema: dict[str, str]) -> pd.DataFrame:
 def build(
     fetcher: Fetcher,
     previous_risques: pd.DataFrame,
+    departements: list[str] | None = None,
     first_year: int = 2016,
     workers: int = 4,
     keep: list[str] | None = None,
 ) -> BuildResult:
-    """Rebuild both tables for the schools of the published file (the roster).
+    """Rebuild both tables for the collèges of ``departements`` (default: settings).
 
+    The list of schools comes from the education directory (open collèges, public or
+    private under contract). Schools already in the published file keep their name,
+    position and sector, so distances stay comparable from one refresh to the next.
     ``keep`` lists extra risk columns to copy from the published file instead of
     refreshing them (for example while a source change is being reviewed).
     """
+    departements = sorted(departements or settings.departements)
     keep = list(keep or [])
     unknown = [c for c in keep if c not in RISQUES_SCHEMA or c == "uai"]
     if unknown:
         raise ValueError(f"Unknown columns for --keep: {unknown}")
-    notes: list[str] = []
+    notes: list[str] = [f"Departments: {', '.join(departements)}"]
     roster = previous_risques.set_index("uai")
-    uais = sorted(roster.index)
 
-    logger.info("Downloading data.education.gouv.fr datasets")
-    edu = education.fetch_all(fetcher, uais)
-    annuaire = education.annuaire_by_uai(edu["annuaire"])
-
-    missing = [u for u in uais if u not in annuaire]
-    if missing:
-        raise ValueError(f"Schools missing from the education directory: {missing}")
-    closed = [u for u in uais if annuaire[u]["etat"] != "OUVERT"]
-    if closed:
-        notes.append(f"Schools no longer open in the directory: {closed}")
-    new = sorted(
-        u for u, a in annuaire.items()
-        if u not in roster.index
-        and a["etat"] == "OUVERT"
-        and a["libelle_nature"] == "COLLEGE"
-        and not (a["nom_etablissement"] or "").lower().startswith("ecole")
+    logger.info("Downloading the education directory for %s", departements)
+    annuaire = education.annuaire_by_uai(education.fetch_directory(fetcher, departements))
+    uais = sorted(u for u, a in annuaire.items() if a["tracked"])
+    if not uais:
+        raise ValueError(f"No collège found in the directory for {departements}")
+    added = sorted(set(uais) - set(roster.index))
+    listed = set(uais)
+    gone = sorted(
+        u for u in roster.index if u not in listed and _department_of(roster.loc[u]) in departements
     )
-    if new:
-        notes.append(
-            f"Open collèges in the directory that are not tracked yet: {new}. "
-            "Add them to the roster by hand (they also need a sector and TMD data)."
-        )
+    if added:
+        notes.append(f"Schools added ({len(added)}): {added[:20]}{' …' if len(added) > 20 else ''}")
+    if gone:
+        notes.append(f"Schools no longer listed as open collèges in the directory: {gone}")
 
-    # Identity and position come from the roster, so distances stay comparable from one
-    # refresh to the next. Positions that drifted in the directory are reported instead.
+    logger.info("Downloading data.education.gouv.fr datasets (%d schools)", len(uais))
+    edu = education.fetch_all(fetcher, uais)
+
+    # Identity and position come from the published file when the school is there, so
+    # distances stay comparable; positions that drifted in the directory are reported.
     schools, moved = [], []
     for uai in uais:
-        prev, a = roster.loc[uai], annuaire[uai]
-        if a["lat"] is not None and a["lon"] is not None:
-            shift = haversine_km(prev["lat"], prev["lon"], a["lat"], a["lon"])
-            if shift > COORDINATE_DRIFT_KM:
-                moved.append(f"{uai} ({shift:.2f} km)")
-        schools.append(
-            {
-                "uai": uai,
-                "nom": prev["nom"],
-                "commune": prev["commune"],
-                "code_insee": prev["code_insee"],
-                "statut": a["statut"],
-                "lat": float(prev["lat"]),
-                "lon": float(prev["lon"]),
+        a = annuaire[uai]
+        territory = {"departement": a["departement"], "departement_nom": a["departement_nom"],
+                     "academie": a["academie"]}
+        if uai in roster.index:
+            prev = roster.loc[uai]
+            if a["lat"] is not None and a["lon"] is not None:
+                shift = haversine_km(prev["lat"], prev["lon"], a["lat"], a["lon"])
+                if shift > COORDINATE_DRIFT_KM:
+                    moved.append(f"{uai} ({shift:.2f} km)")
+            schools.append({
+                "uai": uai, "nom": prev["nom"], "commune": prev["commune"], "code_insee": prev["code_insee"],
+                "statut": a["statut"], **territory, "lat": float(prev["lat"]), "lon": float(prev["lon"]),
                 "secteur_id": prev["secteur_id"],
-            }
-        )
+            })
+        else:
+            if a["lat"] is None or a["lon"] is None:
+                notes.append(f"{uai}: no position in the directory, left out")
+                continue
+            schools.append({
+                "uai": uai, "nom": education.short_name(a["nom_etablissement"] or uai),
+                "commune": a["commune"], "code_insee": a["code_insee"], "statut": a["statut"], **territory,
+                "lat": round(a["lat"], 5), "lon": round(a["lon"], 5), "secteur_id": None,
+            })
     if moved:
         notes.append(
             f"Directory position differs by more than {COORDINATE_DRIFT_KM * 1000:.0f} m "
-            f"(kept the roster position; check and fix by hand if needed): {', '.join(moved)}"
+            f"(kept the published position; check and fix by hand if needed): {', '.join(moved)}"
         )
 
     history = _typed(education.build_history(schools, edu, first_year), HISTORY_SCHEMA)
@@ -139,15 +164,18 @@ def build(
 
     logger.info("Downloading Géorisques data")
     geo = georisques.fetch_all(fetcher, schools, workers)
+    plants, plant_problems = nuclear.fetch_plants(fetcher)
+    if plant_problems:
+        notes.append(f"Nuclear plants not confirmed by Géorisques: {plant_problems}")
 
     rows = []
     for s in schools:
         uai = s["uai"]
-        prev = roster.loc[uai]
+        prev = roster.loc[uai] if uai in roster.index else None
         point = geo["schools"][uai]
         commune = geo["communes"][s["code_insee"]]
         plan = georisques.ppri(point["ppr"])
-        centrale, centrale_km = nearest_centrale(s["lat"], s["lon"])
+        centrale, centrale_km = nearest_centrale(s["lat"], s["lon"], plants)
         rows.append(
             {
                 **s,
@@ -163,14 +191,20 @@ def build(
                 "centrale_proche": centrale,
                 **georisques.catnat_counts(commune["catnat"]),
                 "annee_dicrim": georisques.annee_dicrim(commune["dicrim"]),
-                **{c: prev[c] for c in CARRIED_OVER + keep},
+                # No public source: copied for the schools already published, unknown otherwise.
+                **{c: (prev[c] if prev is not None else None) for c in CARRIED_OVER + keep
+                   if c != "secteur_id"},
             }
         )
-    notes.append(f"Carried over from the previous file (no public source): {CARRIED_OVER}")
+    without = sum(1 for s in schools if s["uai"] not in roster.index)
+    notes.append(f"Carried over from the previous file (no public source): {CARRIED_OVER}"
+                 + (f"; unknown for the {without} new schools" if without else ""))
 
-    logger.info("Downloading the catchment sectors (Département du Loiret)")
-    secteurs = sectors.fetch(fetcher)
-    notes.append(f"Sectors refreshed from the Département du Loiret ({len(secteurs['features'])} sectors).")
+    secteurs, covered = sectors.fetch_for(fetcher, departements)
+    missing_sectors = [d for d in departements if d not in covered]
+    notes.append(f"Sectors refreshed for {covered or 'no department'} "
+                 f"({len(secteurs['features'])} sectors)"
+                 + (f"; no source yet for {missing_sectors} (Sprint 20)" if missing_sectors else "") + ".")
     if keep:
         notes.append(f"Kept from the previous file on request (--keep): {keep}")
     return BuildResult(_typed(rows, RISQUES_SCHEMA), history, notes, secteurs=secteurs)
@@ -184,8 +218,12 @@ def validate(result: BuildResult, previous_risques: pd.DataFrame) -> list[str]:
     for name, df, schema in (("risques", r, RISQUES_SCHEMA), ("history", h, HISTORY_SCHEMA)):
         if list(df.columns) != list(schema):
             errors.append(f"{name}: columns differ from the schema")
-    if set(r["uai"]) != set(previous_risques["uai"]):
-        errors.append("risques: the list of schools changed")
+    # Schools come and go with the directory; a sudden drop means a broken source.
+    before = previous_risques.apply(_department_of, axis=1).value_counts()
+    after = r["departement"].value_counts()
+    for dep, count in before.items():
+        if dep in after.index and after[dep] < 0.9 * count:
+            errors.append(f"risques: department {dep} drops from {count} to {after[dep]} schools")
     if set(h["uai"]) != set(r["uai"]):
         errors.append("history: schools differ from the risk table")
     if r["uai"].duplicated().any():
@@ -195,6 +233,9 @@ def validate(result: BuildResult, previous_risques: pd.DataFrame) -> list[str]:
     for column in REQUIRED:
         if r[column].isna().any():
             errors.append(f"risques: empty values in {column}: {r.loc[r[column].isna(), 'uai'].tolist()}")
+    outside = r.loc[[not in_france(la, lo) for la, lo in zip(r["lat"], r["lon"], strict=True)], "uai"]
+    if len(outside):
+        errors.append(f"risques: position outside France for {outside.tolist()}")
     for column, (low, high) in RANGES.items():
         values = r[column].dropna()
         bad = r.loc[values.index[(values < low) | (values > high)], "uai"].tolist()
@@ -250,10 +291,14 @@ def compare(
     new_history: pd.DataFrame | None = None,
     old_history: pd.DataFrame | None = None,
 ) -> dict[str, Any]:
-    """What changed per column, and how scores and levels move."""
-    new_i, old_i = new.set_index("uai"), old.set_index("uai").reindex(new["uai"])
+    """What changed per column for the schools in both files, how scores and levels move,
+    and which schools were added or removed."""
+    common = sorted(set(new["uai"]) & set(old["uai"]))
+    new_i, old_i = new.set_index("uai").loc[common], old.set_index("uai").loc[common]
     changes: dict[str, list[dict[str, Any]]] = {}
     for column in new_i.columns:
+        if column not in old_i.columns:  # a column added to the schema
+            continue
         a, b = old_i[column], new_i[column]
         differs = _differs(column, a, b)
         for uai in differs[differs].index:
@@ -283,7 +328,11 @@ def compare(
         if new_history is not None and old_history is not None
         else None
     )
-    return {"columns": changes, "scores": scores, "history": history}
+    return {
+        "columns": changes, "scores": scores, "history": history,
+        "added": sorted(set(new["uai"]) - set(old["uai"])),
+        "removed": sorted(set(old["uai"]) - set(new["uai"])),
+    }
 
 
 def _plain(value: Any) -> Any:
@@ -300,6 +349,8 @@ def render_report(
         "",
         f"- Schools: {len(result.risques)}, history rows: {len(result.history)} "
         f"(school years {result.history['rentree'].min()}–{result.history['rentree'].max()})",
+        f"- Added schools: {len(diff.get('added', []))}, removed: {len(diff.get('removed', []))}"
+        + (f" {diff['removed']}" if diff.get("removed") else ""),
         f"- Validation: {'**FAILED**' if errors else 'passed'}",
     ]
     lines += [f"  - {e}" for e in errors]

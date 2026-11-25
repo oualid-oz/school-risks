@@ -132,7 +132,8 @@ def test_icpe_metrics_skip_non_icpe_and_closing_sites():
 
 
 def test_nearest_centrale():
-    name, km = nearest_centrale(47.72, 1.60)
+    plants = {"Saint Laurent des Eaux": (47.7191, 1.5784), "Dampierre en Burly": (47.7334, 2.5171)}
+    name, km = nearest_centrale(47.72, 1.60, plants)
     assert name == "Saint Laurent des Eaux" and km < 3
     assert haversine_km(48.0, 2.0, 48.0, 2.0) == 0
 
@@ -160,13 +161,19 @@ def test_validation_blocks_bad_data_and_compare_reports_changes():
     bad.loc[0, "lat"] = 10.0
     bad.loc[1, "nb_catnat"] = 99
     errors = validate(BuildResult(bad, result.history), result.risques)
-    assert any("lat outside" in e for e in errors)
+    assert any("outside France" in e for e in errors)
 
     diff = compare(bad, result.risques)
     assert {c["uai"] for c in diff["columns"]["nb_catnat"]} == {bad.loc[1, "uai"]}
 
-    errors = validate(BuildResult(result.risques.iloc[1:], result.history), result.risques)
-    assert "risques: the list of schools changed" in errors
+    # Schools come and go with the directory; losing half a department is a broken source.
+    first = result.risques.uai[0]
+    rest = BuildResult(result.risques.iloc[1:], result.history[result.history.uai != first])
+    one_less = validate(rest, result.risques)
+    assert not any("drops" in e for e in one_less)
+    half = result.risques.iloc[::2]
+    errors = validate(BuildResult(half, result.history[result.history.uai.isin(half.uai)]), result.risques)
+    assert any("department 45 drops from 70 to 35" in e for e in errors)
 
 
 def test_publish_archives_previous_files_and_swaps_atomically(tmp_path):

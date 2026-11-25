@@ -54,12 +54,13 @@ def export_colleges(
     q: str | None = None,
     tri: Literal["score", "priorite"] = "score",
     ppms: Literal["a_jour", "ancien", "absent"] | None = None,
+    departement: str | None = None,
     store: DataStore = Depends(get_store),
     session: Session = Depends(get_session),
     user: User = Depends(get_current_user),
 ):
     """Same filters and order as `GET /colleges`, plus the score of each hazard."""
-    rows = store.list_colleges(commune, statut, secteur_id, niveau, q, tri)
+    rows = store.list_colleges(commune, statut, secteur_id, niveau, q, tri, departement)
     scope = _scope(session, user)
     if scope is not None:
         rows = [r for r in rows if r["uai"] in scope]
@@ -75,7 +76,8 @@ def export_colleges(
         if ppms is None or status[r["uai"]].statut == ppms
     ]
     filters = {k: v for k, v in {"commune": commune, "statut": statut, "secteur_id": secteur_id,
-                                 "niveau": niveau, "q": q, "tri": tri, "ppms": ppms}.items() if v}
+                                 "niveau": niveau, "q": q, "tri": tri, "ppms": ppms,
+                                 "departement": departement}.items() if v}
     record_audit(session, request, user, "export.colleges_csv", "export", "colleges",
                  {"filters": filters, "rows": len(rows)})
     session.commit()

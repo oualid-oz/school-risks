@@ -2,11 +2,14 @@
 
 RISQUES_SCHEMA: dict[str, str] = {
     "uai": "str", "nom": "str", "commune": "str", "code_insee": "str", "statut": "str",
+    "departement": "str", "departement_nom": "str", "academie": "str",
     "lat": "float64", "lon": "float64", "secteur_id": "str", "effectif_total": "Int64",
     "ips": "float64", "argiles_classe": "str", "dans_ppri": "bool", "ppri": "str",
     "nb_cavites_500m": "int64", "nb_mouvements_terrain_500m": "int64",
     "distance_icpe_km": "float64", "distance_seveso_km": "float64", "nb_icpe_1km": "int64",
-    "distance_tmd_m": "int64", "type_tmd_proche": "str", "dans_zone_tmd_500m": "bool",
+    # TMD and flood-marker distance have no public source: unknown outside the schools
+    # first published (Loiret), hence nullable.
+    "distance_tmd_m": "Int64", "type_tmd_proche": "str", "dans_zone_tmd_500m": "boolean",
     "distance_centrale_km": "float64", "centrale_proche": "str",
     "distance_repere_crue_km": "float64", "nb_catnat": "int64",
     "nb_catnat_inondations": "int64", "nb_catnat_secheresse": "int64",

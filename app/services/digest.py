@@ -150,7 +150,7 @@ def render(user: User, digest: Digest, scope: str, today: date) -> Email:
 
 def digest_for(session: Session, store: DataStore, user: User, today: date) -> Email | None:
     if user.role == UserRole.admin:
-        uais, scope = store.uais(), "l'ensemble des collèges du département"
+        uais, scope = store.uais(), "l'ensemble des collèges suivis"
     elif user.role == UserRole.referent:
         uais = sorted(assigned_schools(session, user))
         scope = f"vos {len(uais)} collège(s)" if len(uais) > 1 else "votre collège"

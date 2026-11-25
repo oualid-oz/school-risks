@@ -11,6 +11,7 @@ class RiskProfile(BaseModel):
     aleas: dict[str, float]
     indice_priorite: float | None  # score_global × effectif_total / 100; None if unknown
     alertes: list[str]
+    lacunes: list[str] = []  # hazards that could not be evaluated (no data for the territory)
 
 
 class CollegeSummary(BaseModel):
@@ -18,6 +19,8 @@ class CollegeSummary(BaseModel):
     nom: str
     commune: str
     statut: str
+    departement: str | None = None
+    departement_nom: str | None = None
     lat: float
     lon: float
     secteur_id: str | None
@@ -40,6 +43,9 @@ class CollegeDetail(BaseModel):
     commune: str
     code_insee: str
     statut: str
+    departement: str | None = None
+    departement_nom: str | None = None
+    academie: str | None = None
     lat: float
     lon: float
     secteur_id: str | None
@@ -53,9 +59,9 @@ class CollegeDetail(BaseModel):
     distance_icpe_km: float | None
     distance_seveso_km: float | None
     nb_icpe_1km: int
-    distance_tmd_m: int
+    distance_tmd_m: int | None
     type_tmd_proche: str | None
-    dans_zone_tmd_500m: bool
+    dans_zone_tmd_500m: bool | None
     distance_centrale_km: float | None
     centrale_proche: str | None
     distance_repere_crue_km: float | None

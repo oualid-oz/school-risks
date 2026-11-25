@@ -13,11 +13,15 @@ const nf = new Intl.NumberFormat("fr-FR");
 
 let map;
 let mapBounds = null;
+let sectorBounds = null;
+let schoolLayer = null; // the school markers' group
 let mapNeedsFit = false;
 let schools = [];
 let rankingMode = "score"; // "score": risk of the location, "priorite": pupils exposed × risk
 let schoolMarkers = [];
 let currentUser = null;
+let territories = []; // departments in the data (GET /territoires)
+let selectedDepartement = null; // null: all of them
 let statsStale = false; // a PPMS change happened: refresh the dashboard numbers on return
 let currentCharts = [];
 let accessToken = null;
@@ -181,6 +185,103 @@ function setupAccountMenu() {
   });
 }
 
+// ---- Departments ---------------------------------------------------------------------
+const TERRITORY_KEY = "srt.departement";
+
+function depParam(joiner = "?") {
+  return selectedDepartement ? `${joiner}departement=${encodeURIComponent(selectedDepartement)}` : "";
+}
+
+function statsPath() {
+  return `/stats${depParam()}`;
+}
+
+function visibleSchools(list = schools) {
+  return selectedDepartement ? list.filter((s) => s.departement === selectedDepartement) : list;
+}
+
+function territoryLabel(t) {
+  return `${t.code} · ${t.nom || "Département"} (${nf.format(t.colleges)})${t.lacunes ? " — évaluation incomplète" : ""}`;
+}
+
+function setupTerritorySelector() {
+  const field = document.getElementById("territory-field");
+  const select = document.getElementById("territory-select");
+  let saved = null;
+  try { saved = localStorage.getItem(TERRITORY_KEY); } catch { /* private mode */ }
+  selectedDepartement = territories.some((t) => t.code === saved) ? saved : null;
+  field.hidden = territories.length < 2; // one department: nothing to choose
+  const all = element("option", "", `Tous (${nf.format(schools.length)} collèges)`);
+  all.value = "";
+  select.replaceChildren(all, ...territories.map((t) => {
+    const option = element("option", "", territoryLabel(t));
+    option.value = t.code;
+    return option;
+  }));
+  select.value = selectedDepartement || "";
+  if (!select.dataset.bound) {
+    select.dataset.bound = "1";
+    select.addEventListener("change", () => selectTerritory(select.value || null));
+  }
+  updateTerritoryHeading();
+}
+
+function updateTerritoryHeading() {
+  const current = territories.find((t) => t.code === selectedDepartement);
+  const scope = current
+    ? `${current.nom} (${current.code}) · académie ${current.academie || "—"}`
+    : territories.length === 1 ? `${territories[0].nom} (${territories[0].code})` : `${territories.length} départements`;
+  document.getElementById("territory-heading").textContent = `Risques naturels et technologiques des collèges · ${scope}`;
+  const gaps = current ? current.lacunes : territories.reduce((n, t) => n + t.lacunes, 0);
+  const note = document.getElementById("territory-gaps");
+  if (note) note.remove();
+  if (gaps) {
+    const warning = element("p", "territory-gaps", `Évaluation incomplète pour ${nf.format(gaps)} collège(s) : certaines données de risque n’existent pas encore pour ce territoire. Leurs scores sont des minima.`);
+    warning.id = "territory-gaps";
+    document.getElementById("territory-heading").after(warning);
+  }
+}
+
+async function selectTerritory(code) {
+  selectedDepartement = code;
+  try {
+    if (code) localStorage.setItem(TERRITORY_KEY, code);
+    else localStorage.removeItem(TERRITORY_KEY);
+  } catch { /* private mode */ }
+  updateTerritoryHeading();
+  renderSchoolList(schools);
+  applyTerritoryToMap();
+  try {
+    renderStats(await getJson(statsPath()));
+  } catch (error) {
+    showError("dashboard-error", `Impossible de mettre à jour les chiffres : ${error.message}`);
+  }
+}
+
+function applyTerritoryToMap() {
+  if (!map) return;
+  const shown = visibleSchools();
+  const points = shown.map((s) => [s.lat, s.lon]);
+  let bounds = points.length ? L.latLngBounds(points) : null;
+  if (!selectedDepartement && sectorBounds) bounds = bounds ? bounds.extend(sectorBounds) : sectorBounds;
+  mapBounds = bounds;
+  mapNeedsFit = true;
+  fitMapToSelection(); // shows/hides the markers once the map has a view
+  document.getElementById("map-count").textContent = `${nf.format(shown.length)} collèges`;
+}
+
+// Leaflet cannot take layers before the map has a view: change the markers only after a fit,
+// and through their group (not the map), so the group stays the single source of truth.
+function syncMarkerVisibility() {
+  const visible = new Set(visibleSchools().map((s) => s.uai));
+  schoolMarkers.forEach(({ marker, school }) => {
+    const wanted = visible.has(school.uai);
+    if (wanted && !schoolLayer.hasLayer(marker)) schoolLayer.addLayer(marker);
+    if (!wanted && schoolLayer.hasLayer(marker)) schoolLayer.removeLayer(marker);
+  });
+  styleMarkers();
+}
+
 // After a view change, put keyboard and screen-reader users on the new page's title
 // (otherwise the focus stays on the button that was clicked, now hidden).
 function focusViewHeading(id) {
@@ -288,6 +389,7 @@ function setRankingMode(mode) {
 }
 
 function renderSchoolList(list) {
+  list = visibleSchools(list);
   const container = document.getElementById("school-list");
   container.replaceChildren(...rankSchools(list).slice(0, 8).map((school, index) => schoolRow(school, index + 1)));
   document.getElementById("school-count").textContent = String(list.length);
@@ -335,6 +437,7 @@ function renderMap(geojson) {
   enableMapPointSelection(); // spatial.js
 
   const markerGroup = L.featureGroup();
+  schoolLayer = markerGroup;
   schoolMarkers = [];
   schools.forEach((school) => {
     if (!Number.isFinite(school.lat) || !Number.isFinite(school.lon)) return;
@@ -354,9 +457,10 @@ function renderMap(geojson) {
   markerGroup.addTo(map);
   styleMarkers();
   const bounds = sectors.getBounds();
-  mapBounds = bounds.isValid() ? bounds : null;
+  sectorBounds = bounds.isValid() ? bounds : null;
+  mapBounds = sectorBounds;
   mapNeedsFit = true;
-  fitMapToLoiret();
+  fitMapToSelection();
 }
 
 // In priority mode the dot's area is proportional to the index (radius ∝ √index), so a
@@ -371,21 +475,22 @@ function styleMarkers() {
   const ordered = [...schoolMarkers].sort((a, b) => markerRadius(b.school) - markerRadius(a.school));
   ordered.forEach(({ marker, school }) => {
     marker.setRadius(markerRadius(school));
-    marker.bringToFront(); // big dots first, small ones on top, so none is hidden
+    if (schoolLayer?.hasLayer(marker) && map.hasLayer(marker)) marker.bringToFront(); // small ones on top
   });
 }
 
 // Leaflet can only fit bounds once the map container is visible and has a size.
 // The dashboard is still hidden behind the login screen when the map is built, so the
 // first fit is retried when the dashboard is shown (see route()).
-function fitMapToLoiret() {
+function fitMapToSelection() {
   if (!map || !mapNeedsFit) return;
   const container = map.getContainer();
   if (!container.offsetWidth || !container.offsetHeight) return;
   map.invalidateSize();
   if (mapBounds) map.fitBounds(mapBounds, { padding: [14, 14] });
-  else map.setView([47.9, 2.3], 8);
+  else map.setView([46.6, 2.4], 6); // France
   mapNeedsFit = false;
+  syncMarkerVisibility();
 }
 
 function setupSearch() {
@@ -505,6 +610,7 @@ function renderSchool(school, actions, history, ppms) {
   const metadata = element("div", "school-meta");
   metadata.append(
     element("span", "meta-chip", `UAI ${school.uai}`),
+    element("span", "meta-chip", school.departement_nom ? `${school.departement_nom} (${school.departement})` : `Département ${text(school.departement)}`),
     element("span", "meta-chip", `${nf.format(school.effectif_total || 0)} élèves`),
     element("span", "meta-chip", `IPS ${text(school.ips)}`),
     element("span", "meta-chip", `Secteur ${text(school.secteur_id)}`)
@@ -536,6 +642,15 @@ function renderSchool(school, actions, history, ppms) {
     const list = element("ul", "alert-list");
     profile.alertes.forEach((alert) => list.append(element("li", "", alert)));
     riskPanel.append(list);
+  }
+  if (profile.lacunes?.length) {
+    // Hazards the data cannot evaluate here: the score is a minimum, not a reassurance.
+    const gaps = element("div", "gaps-box");
+    gaps.append(element("strong", "", "Évaluation incomplète : le score est un minimum"));
+    const list = element("ul");
+    profile.lacunes.forEach((gap) => list.append(element("li", "", gap)));
+    gaps.append(list);
+    riskPanel.append(gaps);
   }
 
   const historyPanel = element("section", "panel detail-panel");
@@ -582,7 +697,7 @@ function canEditSchool(uai) {
 
 async function refreshDashboardNumbers() {
   try {
-    const [stats, collegeData] = await Promise.all([getJson("/stats"), getJson("/colleges")]);
+    const [stats, collegeData] = await Promise.all([getJson(statsPath()), getJson("/colleges")]);
     schools = collegeData;
     renderStats(stats);
     statsStale = false;
@@ -785,7 +900,7 @@ function route() {
     currentCharts = [];
     showView("dashboard");
     if (statsStale) refreshDashboardNumbers();
-    if (map) setTimeout(() => { map.invalidateSize(); fitMapToLoiret(); }, 0);
+    if (map) setTimeout(() => { map.invalidateSize(); fitMapToSelection(); }, 0);
   }
 }
 
@@ -812,7 +927,7 @@ async function init() {
   });
   document.getElementById("export-list").replaceWith(
     Object.assign(
-      exportButton("Exporter (CSV)", () => `/exports/colleges.csv?tri=${rankingMode}`, "Tous les collèges, dans l’ordre affiché, pour Excel"),
+      exportButton("Exporter (CSV)", () => `/exports/colleges.csv?tri=${rankingMode}${depParam("&")}`, "Les collèges affichés, dans l’ordre affiché, pour Excel"),
       { id: "export-list" }
     )
   );
@@ -862,15 +977,18 @@ async function init() {
 async function loadDashboard() {
   try {
     await loadThresholds(); // before anything is coloured
-    const [stats, sectorData, collegeData] = await Promise.all([
-      getJson("/stats"),
+    const [territoryData, sectorData, collegeData] = await Promise.all([
+      getJson("/territoires"),
       getJson("/secteurs?with_scores=true"),
       getJson("/colleges"),
     ]);
+    territories = territoryData;
     schools = collegeData;
-    renderStats(stats);
+    setupTerritorySelector();
+    renderStats(await getJson(statsPath()));
     renderSchoolList(schools);
     renderMap(sectorData);
+    applyTerritoryToMap();
     if (location.hash) route();
   } catch (error) {
     showError("dashboard-error", `Impossible de charger le tableau de bord : ${error.message}`);

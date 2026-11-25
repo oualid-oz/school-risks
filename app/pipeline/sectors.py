@@ -109,3 +109,20 @@ def compare(new: dict[str, Any], old: dict[str, Any], tolerance: float = 0.01) -
         "removed": sorted(set(old_by) - set(new_by)),
         "changed": changed,
     }
+
+
+# Departments whose sectors have a known open source (more in Sprint 20).
+SOURCES = {"45": fetch}
+
+
+def fetch_for(fetcher: Fetcher, departements: list[str]) -> tuple[dict[str, Any], list[str]]:
+    """Sectors of the departments that have a source, merged; and which ones were covered."""
+    features, covered = [], []
+    for departement in sorted(departements):
+        source = SOURCES.get(departement)
+        if source is None:
+            continue
+        features += source(fetcher)["features"]
+        covered.append(departement)
+    features.sort(key=lambda f: f["properties"]["secteur_id"])
+    return {"type": "FeatureCollection", "features": features}, covered

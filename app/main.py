@@ -54,7 +54,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title=settings.app_name,
-    description="Track natural and technological risks for collèges in Loiret.",
+    description="Track natural and technological risks for collèges, department by department.",
     version=settings.build_version,
     lifespan=lifespan,
 )
@@ -77,7 +77,7 @@ if settings.trusted_proxies:
 
 for r in (
     auth.router, colleges.router, ppms.router, secteurs.router, actions.router, stats.router,
-    exports.router, internal.router, scores.router,
+    exports.router, internal.router, scores.router, stats.territories_router,
 ):
     app.include_router(r, prefix=settings.api_prefix)
 app.include_router(health.router)

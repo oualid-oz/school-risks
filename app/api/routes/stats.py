@@ -21,14 +21,30 @@ router = APIRouter(
 @limiter.limit(settings.rate_limit_default)
 def overview(
     request: Request,
+    departement: str | None = None,
     store: DataStore = Depends(get_store),
     session: Session = Depends(get_session),
 ):
     """Dashboard numbers: risk distribution plus follow-up progress."""
-    rows = session.exec(select(Action.statut, func.count()).group_by(Action.statut)).all()
-    ppms = Counter(s.statut for s in ppms_statuses(session, store.uais()).values())
+    uais = [c["uai"] for c in store.list_colleges(departement=departement)]
+    stmt = select(Action.statut, func.count()).group_by(Action.statut)
+    if departement:
+        stmt = stmt.where(Action.uai.in_(uais))
+    rows = session.exec(stmt).all()
+    ppms = Counter(s.statut for s in ppms_statuses(session, uais).values())
     return {
-        **store.stats(),
+        **store.stats(departement),
         "actions_par_statut": {s.value: n for s, n in rows},
         "ppms_par_statut": {k: ppms.get(k, 0) for k in ("a_jour", "ancien", "absent")},
     }
+
+
+territories_router = APIRouter(tags=["stats"], dependencies=[Depends(get_current_user)])
+
+
+@territories_router.get("/territoires", response_model=list[dict[str, Any]])
+@limiter.limit(settings.rate_limit_default)
+def territories(request: Request, store: DataStore = Depends(get_store)):
+    """Departments in the data: code, name, académie, number of schools, and how many of them
+    have parts of the evaluation missing (no data for the territory)."""
+    return store.territories()

@@ -5,8 +5,20 @@
 
 const NEARBY_RADIUS_KM = 5;
 const BAN_URL = "https://api-adresse.data.gouv.fr/search/";
-// Loiret: bias results towards the department, keep only its postcodes (45xxx).
-const LOIRET_CENTRE = { lat: 47.91, lon: 2.25 };
+// Results are biased towards the schools on screen and limited to their departments'
+// postcodes (Corsica 20xxx, overseas 97x…).
+
+function postcodePrefix(departement) {
+  return departement === "2A" || departement === "2B" ? "20" : departement;
+}
+
+function searchArea() {
+  const shown = visibleSchools();
+  const lat = shown.reduce((sum, s) => sum + s.lat, 0) / (shown.length || 1);
+  const lon = shown.reduce((sum, s) => sum + s.lon, 0) / (shown.length || 1);
+  const prefixes = [...new Set(shown.map((s) => postcodePrefix(s.departement || "")))].filter(Boolean);
+  return { lat, lon, prefixes };
+}
 
 let pointMarker = null;
 let pointRequest = 0; // ignore answers of a click superseded by a newer one
@@ -22,12 +34,15 @@ function setupSpatial() {
     results.replaceChildren(element("li", "muted", "Recherche…"));
     results.hidden = false;
     try {
-      const url = `${BAN_URL}?q=${encodeURIComponent(query)}&limit=6&lat=${LOIRET_CENTRE.lat}&lon=${LOIRET_CENTRE.lon}`;
+      const area = searchArea();
+      const url = `${BAN_URL}?q=${encodeURIComponent(query)}&limit=10&lat=${area.lat.toFixed(4)}&lon=${area.lon.toFixed(4)}`;
       const response = await fetch(url);
       if (!response.ok) throw new Error(`Erreur ${response.status}`);
-      const features = (await response.json()).features.filter((f) => String(f.properties.postcode || "").startsWith("45"));
+      const features = (await response.json()).features
+        .filter((f) => !area.prefixes.length || area.prefixes.some((p) => String(f.properties.postcode || "").startsWith(p)))
+        .slice(0, 6);
       if (!features.length) {
-        results.replaceChildren(element("li", "muted", "Aucune adresse trouvée dans le Loiret."));
+        results.replaceChildren(element("li", "muted", "Aucune adresse trouvée dans les départements affichés."));
         return;
       }
       results.replaceChildren(...features.map((feature) => {
@@ -112,7 +127,7 @@ async function selectPoint(lat, lon, label) {
     sector.append(element("p", "", `${located.secteur.secteur || located.secteur.secteur_id} (${located.secteur.commune || "—"})`));
     located.colleges.forEach((school) => sector.append(schoolLink(school, "collège de secteur")));
   } else {
-    sector.append(element("p", "muted small", "Ce point n’est dans aucun secteur connu (hors du Loiret ou secteur non cartographié)."));
+    sector.append(element("p", "muted small", "Ce point n’est dans aucun secteur connu (secteurs pas encore disponibles pour ce territoire, ou hors des départements suivis)."));
   }
 
   const near = element("div", "point-block");
