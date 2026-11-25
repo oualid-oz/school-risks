@@ -89,6 +89,59 @@ def live_server():
 
 
 @pytest.fixture(scope="session")
+def pilot_server(tmp_path_factory):
+    """A second server on the pilot data (3 departments), in SQLite mode: it reads the data
+    files directly. Map point queries need PostGIS and are not available there."""
+    port = _free_port()
+    env = {
+        **os.environ,
+        "SRT_DATABASE_URL": f"sqlite:///{tmp_path_factory.mktemp('pilot') / 'pilot.db'}",
+        "SRT_DATA_DIR": str(ROOT / "tests" / "e2e" / "fixtures" / "pilot"),
+        "SRT_JWT_SECRET_KEY": secrets.token_urlsafe(48),
+        "SRT_BOOTSTRAP_ADMIN_USERNAME": ADMIN[0],
+        "SRT_BOOTSTRAP_ADMIN_PASSWORD": ADMIN[1],
+        "SRT_RATE_LIMIT_LOGIN": "1000/minute",
+        "SRT_RATE_LIMIT_DEFAULT": "10000/minute",
+        "SRT_LOG_FORMAT": "text",
+    }
+    env.pop("SRT_E2E_DATABASE_URL", None)
+    server = subprocess.Popen(
+        [sys.executable, "-m", "uvicorn", "app.main:app", "--port", str(port), "--no-access-log"],
+        cwd=ROOT, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT,
+    )
+    base = f"http://127.0.0.1:{port}"
+    try:
+        for _ in range(100):
+            try:
+                if httpx.get(f"{base}/health/ready", timeout=1).status_code == 200:
+                    break
+            except httpx.TransportError:
+                pass
+            time.sleep(0.2)
+        else:
+            raise RuntimeError("pilot server not ready")
+        yield base
+    finally:
+        server.terminate()
+        server.wait(timeout=10)
+
+
+@pytest.fixture
+def pilot_page(browser, pilot_server):
+    context = browser.new_context(
+        base_url=pilot_server, locale="fr-FR", viewport={"width": 1280, "height": 900}
+    )
+    page = context.new_page()
+    page.set_default_timeout(15_000)
+    errors: list[str] = []
+    page.on("pageerror", lambda exc: errors.append(str(exc)))
+    login(page, *ADMIN)
+    yield page
+    context.close()
+    assert not errors, f"JavaScript errors: {errors}"
+
+
+@pytest.fixture(scope="session")
 def api(live_server):
     """httpx client signed in as the admin, to set up data without the interface."""
     token = httpx.post(

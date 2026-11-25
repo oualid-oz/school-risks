@@ -21,32 +21,76 @@ def _in_list(field: str, values: list[str]) -> str:
     return f"{field} in ({quoted})"
 
 
+BATCH = 150  # UAIs per request: keeps the URL short with several departments
+
+
 def _export(fetcher: Fetcher, dataset: str, where: str) -> list[dict[str, Any]]:
     rows = fetcher.get_json(f"{API}/{dataset}/exports/json", {"where": where})
     return rows or []
 
 
+def _export_by_uai(fetcher: Fetcher, dataset: str, field: str, uais: list[str]) -> list[dict[str, Any]]:
+    uais = sorted(uais)
+    return [
+        row
+        for start in range(0, len(uais), BATCH)
+        for row in _export(fetcher, dataset, _in_list(field, uais[start:start + BATCH]))
+    ]
+
+
+def directory_code(departement: str) -> str:
+    """Department code as the directory writes it: "45" -> "045", "2A" -> "02A", "971" -> "971"."""
+    return departement.zfill(3)
+
+
+def department_code(directory_value: str) -> str:
+    """Back to the usual code: "045" -> "45", "02A" -> "2A", "971" -> "971"."""
+    if len(directory_value) == 3 and directory_value.startswith("0"):
+        return directory_value[1:]
+    return directory_value
+
+
+def fetch_directory(fetcher: Fetcher, departements: list[str]) -> list[dict[str, Any]]:
+    codes = ", ".join(f"'{directory_code(d)}'" for d in sorted(departements))
+    return _export(
+        fetcher, "fr-en-annuaire-education",
+        f"code_departement in ({codes}) and type_etablissement='Collège'",
+    )
+
+
+def is_tracked_college(row: dict[str, Any]) -> bool:
+    """Open collèges, public or private under contract (not SEGPA sections, not private
+    schools without a contract). Reproduces the 70 schools first tracked in Loiret."""
+    if row.get("etat") != "OUVERT" or row.get("libelle_nature") != "COLLEGE":
+        return False
+    public = (row.get("statut_public_prive") or "").lower() == "public"
+    return public or "HORS" not in (row.get("type_contrat_prive") or "").upper()
+
+
+_NAME_PREFIXES = ("collège privé ", "college prive ", "collège public ", "collège ", "college ")
+
+
+def short_name(name: str) -> str:
+    """"Collège privé Charles de Foucauld" -> "Charles de Foucauld" (as the published names)."""
+    for prefix in _NAME_PREFIXES:
+        if name.lower().startswith(prefix):
+            return name[len(prefix):].strip()
+    return name.strip()
+
+
 def fetch_all(fetcher: Fetcher, uais: list[str]) -> dict[str, list[dict[str, Any]]]:
+    """Enrolment, IPS and DNB rows of these schools."""
     return {
-        "annuaire": _export(
-            fetcher,
-            "fr-en-annuaire-education",
-            "code_departement='045' and type_etablissement='Collège'",
-        ),
-        "effectifs": _export(
-            fetcher, "fr-en-college-effectifs-niveau-sexe-lv", _in_list("numero_college", uais)
+        "effectifs": _export_by_uai(
+            fetcher, "fr-en-college-effectifs-niveau-sexe-lv", "numero_college", uais
         ),
         "ips": [
             {**row, "_dataset": ds}
             for ds in IPS_DATASETS
-            for row in _export(fetcher, ds, _in_list("uai", uais))
+            for row in _export_by_uai(fetcher, ds, "uai", uais)
         ],
-        "dnb": _export(
-            fetcher, "fr-en-dnb-par-etablissement", _in_list("numero_d_etablissement", uais)
-        ),
-        "ivac": _export(
-            fetcher, "fr-en-indicateurs-valeur-ajoutee-colleges", _in_list("uai", uais)
-        ),
+        "dnb": _export_by_uai(fetcher, "fr-en-dnb-par-etablissement", "numero_d_etablissement", uais),
+        "ivac": _export_by_uai(fetcher, "fr-en-indicateurs-valeur-ajoutee-colleges", "uai", uais),
     }
 
 
@@ -84,6 +128,12 @@ def annuaire_by_uai(rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
             "etat": r.get("etat"),
             "nom_etablissement": r.get("nom_etablissement"),
             "libelle_nature": r.get("libelle_nature"),
+            "commune": r.get("nom_commune"),
+            "code_insee": r.get("code_commune"),
+            "departement": department_code(r.get("code_departement") or ""),
+            "departement_nom": r.get("libelle_departement"),
+            "academie": r.get("libelle_academie"),
+            "tracked": is_tracked_college(r),
         }
     return out
 

@@ -69,19 +69,21 @@ HAZARDS = ["inondation", "argiles", "mouvements_terrain", "industriel", "tmd", "
 def colleges_csv(rows: list[dict[str, Any]]) -> bytes:
     """`rows`: school summaries with `profil` (risk profile) and `ppms` (PpmsStatus)."""
     header = [
-        "UAI", "Nom", "Commune", "Statut", "Secteur", "Élèves", "IPS",
+        "UAI", "Nom", "Commune", "Département", "Statut", "Secteur", "Élèves", "IPS",
         "Score global", "Niveau", "Aléa principal", "Indice de priorité",
         *[f"Score {ALEA_LABELS[h].lower()}" for h in HAZARDS],
-        "PPMS", "PPMS mis à jour le", "Alertes",
+        "PPMS", "PPMS mis à jour le", "Alertes", "Évaluation incomplète",
     ]
     return to_csv(header, (
         [
-            r["uai"], r["nom"], r["commune"], r["statut"], r["secteur_id"], r["effectif_total"], r["ips"],
+            r["uai"], r["nom"], r["commune"], r.get("departement"), r["statut"], r["secteur_id"],
+            r["effectif_total"], r["ips"],
             r["score_global"], label(NIVEAU_LABELS, r["niveau"]), label(ALEA_LABELS, r["alea_principal"]),
             r["indice_priorite"],
             *[r["profil"]["aleas"][h] for h in HAZARDS],
             label(PPMS_LABELS, r["ppms"].statut), r["ppms"].derniere_mise_a_jour,
             " | ".join(r["alertes"]),
+            " | ".join(r["profil"].get("lacunes", [])),
         ]
         for r in rows
     ))

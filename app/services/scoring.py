@@ -163,4 +163,19 @@ def compute_risk_profile(r: dict[str, Any], params: ScoringParams | None = None)
         "aleas": aleas,
         "indice_priorite": indice,
         "alertes": alertes,
+        "lacunes": data_gaps(r),
     }
+
+
+# Parts of the evaluation a school's data cannot support (no source for its department):
+# the score is then a lower bound for that hazard, and the interface says so.
+GAPS = {
+    "distance_tmd_m": "Transport de matières dangereuses non évalué : pas de données pour ce territoire",
+    "distance_repere_crue_km": (
+        "Repères de crue non pris en compte dans le score inondation : pas de données pour ce territoire"
+    ),
+}
+
+
+def data_gaps(r: dict[str, Any]) -> list[str]:
+    return [text for column, text in GAPS.items() if column in r and r[column] is None]

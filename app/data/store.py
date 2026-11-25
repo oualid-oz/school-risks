@@ -18,6 +18,12 @@ from app.core.config import settings
 from app.services.scoring import compute_risk_profile
 
 
+def department_of_insee(code_insee: str) -> str:
+    """Department of a commune code: "45234" -> "45", "2A004" -> "2A", "97411" -> "974"."""
+    code = str(code_insee)
+    return code[:3] if code.startswith("97") else code[:2]
+
+
 def _clean(value: Any) -> Any:
     """Turn pandas/numpy missing values and scalars into JSON-friendly Python values."""
     if value is None or value is pd.NA:
@@ -63,6 +69,10 @@ class DataStore:
         self.source = source
         self.risques, self.history, self.secteurs = reader()
         self.risques["ppri"] = self.risques["ppri"].replace("", None)
+        if "departement" not in self.risques.columns:  # files published before Sprint 17
+            self.risques["departement"] = self.risques["code_insee"].map(department_of_insee)
+            self.risques["departement_nom"] = None
+            self.risques["academie"] = None
 
         self._risk_rows = {r["uai"]: r for r in _records(self.risques)}
         self._profiles = {uai: compute_risk_profile(r) for uai, r in self._risk_rows.items()}
@@ -79,12 +89,15 @@ class DataStore:
         niveau: str | None = None,
         q: str | None = None,
         tri: str = "score",
+        departement: str | None = None,
     ) -> list[dict[str, Any]]:
         """Filtered schools, highest first by ``tri``: "score" (risk of the location) or
         "priorite" (pupils exposed, weighted by risk; schools without an index last)."""
         out = []
         for uai, r in self._risk_rows.items():
             p = self._profiles[uai]
+            if departement and r.get("departement") != departement:
+                continue
             if commune and r["commune"].lower() != commune.lower():
                 continue
             if statut and r["statut"] != statut:
@@ -99,7 +112,9 @@ class DataStore:
         if tri == "priorite":
             return sorted(
                 out,
-                key=lambda x: (x["indice_priorite"] is not None, x["indice_priorite"] or 0, x["score_global"]),
+                key=lambda x: (
+                    x["indice_priorite"] is not None, x["indice_priorite"] or 0, x["score_global"]
+                ),
                 reverse=True,
             )
         return sorted(out, key=lambda x: x["score_global"], reverse=True)
@@ -158,8 +173,21 @@ class DataStore:
         return self._sector_by_id.get(secteur_id)
 
     # ---- stats ----------------------------------------------------------
-    def stats(self) -> dict[str, Any]:
-        rows = list(self._risk_rows.values())
+    def territories(self) -> list[dict[str, Any]]:
+        """Departments present in the data, with their académie and number of schools."""
+        out: dict[str, dict[str, Any]] = {}
+        for r in self._risk_rows.values():
+            code = r.get("departement")
+            entry = out.setdefault(code, {
+                "code": code, "nom": r.get("departement_nom"), "academie": r.get("academie"),
+                "colleges": 0, "lacunes": 0,
+            })
+            entry["colleges"] += 1
+            entry["lacunes"] += bool(self._profiles[r["uai"]]["lacunes"])
+        return sorted(out.values(), key=lambda t: t["code"] or "")
+
+    def stats(self, departement: str | None = None) -> dict[str, Any]:
+        rows = [r for r in self._risk_rows.values() if not departement or r.get("departement") == departement]
         profiles = [self._profiles[r["uai"]] for r in rows]
         niveaux: dict[str, int] = {}
         eleves: dict[str, int] = {}
@@ -173,6 +201,7 @@ class DataStore:
             "par_niveau": niveaux,
             "eleves_par_niveau": eleves,
             "sans_effectif": sum(1 for p in profiles if p["indice_priorite"] is None),
+            "evaluation_incomplete": sum(1 for p in profiles if p["lacunes"]),
             "dans_ppri": sum(1 for r in rows if r["dans_ppri"]),
             "dans_zone_tmd_500m": sum(1 for r in rows if r["dans_zone_tmd_500m"]),
             "argiles_fort": sum(1 for r in rows if r["argiles_classe"] == "fort"),
@@ -197,6 +226,8 @@ class DataStore:
             "nom": r["nom"],
             "commune": r["commune"],
             "statut": r["statut"],
+            "departement": r.get("departement"),
+            "departement_nom": r.get("departement_nom"),
             "lat": r["lat"],
             "lon": r["lon"],
             "secteur_id": r["secteur_id"],

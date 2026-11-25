@@ -152,7 +152,8 @@ def build_fiche(data: FicheData) -> bytes:
     pdf = FichePDF(f"Fiche risques {c['uai']}")
     pdf.set_title(f"Fiche risques — {c['nom']} ({c['uai']})")
     pdf.set_author("School Risk Tracker")
-    pdf.set_subject("Risques naturels et technologiques, collèges du Loiret")
+    territory = f" · {c['departement_nom']} ({c['departement']})" if c.get("departement_nom") else ""
+    pdf.set_subject(f"Risques naturels et technologiques des collèges{territory}")
     pdf.add_page()
 
     # Header

@@ -1,11 +1,19 @@
 """Application settings, overridable through environment variables or a .env file."""
 import os
 from pathlib import Path
+from typing import Annotated
 
 from pydantic import AliasChoices, Field, field_validator, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 BASE_DIR = Path(__file__).resolve().parents[2]
+
+
+def parse_departements(value: str | list) -> list[str]:
+    """"045, 17;2a" -> ["45", "17", "2A"] (INSEE-style codes, 971… for overseas)."""
+    parts = value.replace(";", ",").split(",") if isinstance(value, str) else value
+    codes = [str(code).strip().upper() for code in parts if str(code).strip()]
+    return [code[1:] if len(code) == 3 and code.startswith("0") else code for code in codes]
 
 
 class Settings(BaseSettings):
@@ -16,6 +24,8 @@ class Settings(BaseSettings):
     api_prefix: str = "/api/v1"
 
     data_dir: Path = BASE_DIR / "data"
+    # Departments the data pipeline covers: "45" or "45,17,74" (codes as in INSEE: 2A, 971…).
+    departements: Annotated[list[str], NoDecode] = ["45"]
     colleges_file: str = "colleges.parquet"
     risques_file: str = "colleges_risques.parquet"
     secteurs_file: str = "colleges_secteurs.geojson"
@@ -45,6 +55,11 @@ class Settings(BaseSettings):
     # IPs of reverse proxies allowed to set X-Forwarded-For / X-Forwarded-Proto.
     # Leave empty when the API is exposed directly.
     trusted_proxies: list[str] = []
+
+    @field_validator("departements", mode="before")
+    @classmethod
+    def _split_departements(cls, value: object) -> object:
+        return parse_departements(value) if isinstance(value, str | list) else value
 
     @field_validator("database_url")
     @classmethod

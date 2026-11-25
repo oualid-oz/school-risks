@@ -1,6 +1,6 @@
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from sqlmodel import Session
 
 from app.api.routes.auth import limiter
@@ -43,14 +43,21 @@ def list_colleges(
     ppms: Literal["a_jour", "ancien", "absent"] | None = Query(
         None, description="Only schools whose PPMS has this status"
     ),
+    departement: str | None = Query(None, description="Department code: 45, 2A, 971…"),
+    limit: int | None = Query(None, ge=1, le=1000, description="Page size (default: everything)"),
+    offset: int = Query(0, ge=0),
+    response: Response = None,
     store: DataStore = Depends(get_store),
     session: Session = Depends(get_session),
 ):
-    """All schools, highest first by `tri`, with the status of their PPMS."""
-    rows = store.list_colleges(commune, statut, secteur_id, niveau, q, tri)
+    """Schools, highest first by `tri`, with the status of their PPMS.
+    The total before paging is in the `X-Total-Count` header."""
+    rows = store.list_colleges(commune, statut, secteur_id, niveau, q, tri, departement)
     status = ppms_statuses(session, [r["uai"] for r in rows])
     rows = [{**r, "ppms_statut": status[r["uai"]].statut} for r in rows]
-    return [r for r in rows if ppms is None or r["ppms_statut"] == ppms]
+    rows = [r for r in rows if ppms is None or r["ppms_statut"] == ppms]
+    response.headers["X-Total-Count"] = str(len(rows))
+    return rows[offset:offset + limit] if limit else rows[offset:]
 
 
 @router.get("/proches", response_model=list[CollegeNearby])

@@ -19,7 +19,7 @@ from pathlib import Path
 import pandas as pd
 from sqlmodel import Session
 
-from app.core.config import settings
+from app.core.config import parse_departements, settings
 from app.db import is_postgres
 from app.pipeline.build import build, compare, publish, render_report, validate, write_staging
 from app.pipeline.client import Fetcher
@@ -35,9 +35,15 @@ def cmd_build(args: argparse.Namespace) -> int:
     previous = pd.read_parquet(data_dir / settings.risques_file)
     previous_history = pd.read_parquet(data_dir / settings.colleges_file)
 
+    departements = parse_departements(args.departements) if args.departements else settings.departements
+    if "ALL" in departements:
+        print("All of France needs the bulk-data pipeline (Sprint 18): list departments instead, "
+              "e.g. --departements 45,17,74.", file=sys.stderr)
+        return 2
     with Fetcher(cache, offline=args.offline) as fetcher:
         result = build(
-            fetcher, previous, first_year=args.first_year, workers=args.workers, keep=args.keep
+            fetcher, previous, departements=departements, first_year=args.first_year,
+            workers=args.workers, keep=args.keep,
         )
 
     errors = validate(result, previous)
@@ -110,6 +116,10 @@ def main(argv: list[str] | None = None) -> int:
     b.add_argument("--cache-dir", type=Path, help="Where raw responses are cached")
     b.add_argument("--first-year", type=int, default=2016, help="First school year of the history")
     b.add_argument("--workers", type=int, default=4, help="Parallel API requests")
+    b.add_argument(
+        "--departements", metavar="CODES",
+        help="Departments to build, e.g. 45,17,74 (default: SRT_DEPARTEMENTS, else 45)",
+    )
     b.add_argument(
         "--keep",
         action="append",
