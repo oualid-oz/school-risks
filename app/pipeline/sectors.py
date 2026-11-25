@@ -111,8 +111,15 @@ def compare(new: dict[str, Any], old: dict[str, Any], tolerance: float = 0.01) -
     }
 
 
-# Departments whose sectors have a known open source (more in Sprint 20).
+# Departments that publish their own sector map. Elsewhere, sectors come from the national
+# school map (school_map.py, bulk mode), approximate where a commune is split.
 SOURCES = {"45": fetch}
+SOURCE_LABELS = {
+    "departement": "Département (SIG)",
+    "carte_scolaire": "Carte scolaire (communes entières)",
+    "carte_scolaire_approchee": "Carte scolaire (communes partagées : découpage approché)",
+    "mixte": "Département et carte scolaire",
+}
 
 
 def fetch_for(fetcher: Fetcher, departements: list[str]) -> tuple[dict[str, Any], list[str]]:
@@ -122,7 +129,32 @@ def fetch_for(fetcher: Fetcher, departements: list[str]) -> tuple[dict[str, Any]
         source = SOURCES.get(departement)
         if source is None:
             continue
-        features += source(fetcher)["features"]
+        for f in source(fetcher)["features"]:
+            f["properties"] |= {"source": "departement", "departements": [departement]}
+            features.append(f)
         covered.append(departement)
     features.sort(key=lambda f: f["properties"]["secteur_id"])
     return {"type": "FeatureCollection", "features": features}, covered
+
+
+def _polygons(geometry: dict[str, Any]) -> list[Any]:
+    return [geometry["coordinates"]] if geometry["type"] == "Polygon" else list(geometry["coordinates"])
+
+
+def merge(collection: dict[str, Any], extra: list[dict[str, Any]]) -> dict[str, Any]:
+    """Add school-map sectors to the department-source ones. A collège present in both (it
+    serves communes on both sides of a department border) becomes one feature."""
+    by_id = {f["properties"]["secteur_id"]: f for f in collection["features"]}
+    for f in extra:
+        sid = f["properties"]["secteur_id"]
+        if sid not in by_id:
+            by_id[sid] = f
+            continue
+        kept = by_id[sid]
+        kept["geometry"] = {"type": "MultiPolygon",
+                            "coordinates": _polygons(kept["geometry"]) + _polygons(f["geometry"])}
+        props = kept["properties"]
+        both = set(props.get("departements") or []) | set(f["properties"]["departements"])
+        props["departements"] = sorted(both)
+        props["source"] = "mixte"
+    return {"type": "FeatureCollection", "features": [by_id[k] for k in sorted(by_id)]}

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from geoalchemy2 import Geometry
 from sqlalchemy import (
+    ARRAY,
     Boolean,
     Column,
     DateTime,
@@ -110,6 +111,10 @@ secteur = Table(
     Column("commune", String),
     Column("code_insee", String(5)),
     Column("departement", String),
+    # Where the outline comes from (departement, carte_scolaire, carte_scolaire_approchee, mixte)
+    # and the departments it covers (Sprint 20).
+    Column("source", String),
+    Column("departements", ARRAY(String)),
     Column("geom", Geometry("MULTIPOLYGON", srid=4326, spatial_index=True), nullable=False),
 )
 

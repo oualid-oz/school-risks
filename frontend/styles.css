@@ -91,6 +91,7 @@ main:focus, h1:focus { outline: 0; }
 .territory-select { display: inline-flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 11px; color: #3f4c45; }
 .territory-select select { height: 32px; border: 1px solid #dfe6df; border-radius: 7px; padding: 0 8px; font-size: 12px; background: white; color: var(--ink); max-width: 100%; }
 .territory-gaps { margin: 8px 0 0; padding: 7px 10px; border-radius: 7px; background: #fff8eb; color: #7a4f17; font-size: 11px; max-width: 640px; }
+.sector-source { margin: 6px 0 0; color: #59665e; font-size: 11px; max-width: 640px; }
 .gaps-box { margin-top: 10px; padding: 10px 12px; border-radius: 7px; background: #fff8eb; color: #7a4f17; font-size: 11px; }
 .gaps-box ul { margin: 6px 0 0; padding-left: 18px; }
 .territory-box { margin-top: 10px; padding: 10px 12px; border-radius: 7px; background: #eef4fb; color: #24486b; font-size: 11px; }

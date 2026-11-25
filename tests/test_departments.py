@@ -65,7 +65,8 @@ def test_api_filters_by_department_and_pages(client):
     assert [c["uai"] for c in page.json()] == [c["uai"] for c in everything[60:]]
 
     assert client.get(f"{API}/territoires").json() == [
-        {"code": "45", "nom": "Loiret", "academie": "Orléans-Tours", "colleges": 70, "lacunes": 0},
+        {"code": "45", "nom": "Loiret", "academie": "Orléans-Tours", "colleges": 70, "lacunes": 0,
+         "eleve": 13, "score_moyen": 36.7, "secteurs": {"total": 59, "par_source": {"departement": 59}}},
     ]
     assert client.get(f"{API}/stats", params={"departement": "45"}).json()["nb_colleges"] == 70
     assert client.get(f"{API}/stats", params={"departement": "17"}).json()["nb_colleges"] == 0
@@ -100,3 +101,31 @@ def test_national_report_has_a_line_per_department_and_capped_lists():
 
     assert _capped(list(range(25))).endswith("… (+5)")
     assert _capped(["a", "b"]) == "a, b"
+
+
+def test_sector_sources_merge_into_one_feature_per_college():
+    from app.pipeline.sectors import merge
+
+    def feature(sid: str, x: float, source: str, deps: list[str]) -> dict:
+        ring = [[x, 47.0], [x + 0.1, 47.0], [x + 0.1, 47.1], [x, 47.0]]
+        return {"type": "Feature", "geometry": {"type": "Polygon", "coordinates": [ring]},
+                "properties": {"secteur_id": sid, "secteur": sid, "source": source, "departements": deps}}
+
+    departement = {"type": "FeatureCollection", "features": [feature("0410008L", 2.0, "departement", ["45"])]}
+    merged = merge(departement, [feature("0410008L", 2.1, "carte_scolaire", ["41"]),
+                                 feature("0410009M", 2.2, "carte_scolaire_approchee", ["41"])])
+    by_id = {f["properties"]["secteur_id"]: f for f in merged["features"]}
+    both = by_id["0410008L"]
+    assert both["geometry"]["type"] == "MultiPolygon" and len(both["geometry"]["coordinates"]) == 2
+    assert both["properties"]["source"] == "mixte" and both["properties"]["departements"] == ["41", "45"]
+    assert by_id["0410009M"]["properties"]["source"] == "carte_scolaire_approchee"
+
+
+def test_sectors_api_filters_by_department(client):
+    everything = client.get(f"{API}/secteurs").json()["features"]
+    loiret = client.get(f"{API}/secteurs", params={"departement": "45"}).json()["features"]
+    assert len(everything) == len(loiret) == 59
+    assert all(f["properties"]["source"] == "departement" for f in loiret)
+    assert client.get(f"{API}/secteurs", params={"departement": "17"}).json()["features"] == []
+    response = client.get(f"{API}/colleges", headers={"Accept-Encoding": "gzip"})
+    assert response.headers.get("content-encoding") == "gzip"  # thousands of schools: compressed

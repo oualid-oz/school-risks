@@ -142,9 +142,19 @@ class DataStore:
         return uai in self._risk_rows
 
     # ---- sectors --------------------------------------------------------
-    def secteurs_geojson(self, with_scores: bool = True) -> dict[str, Any]:
+    @staticmethod
+    def _in_department(feature: dict[str, Any], departement: str | None) -> bool:
+        if departement is None:
+            return True
+        covered = feature["properties"].get("departements")
+        return covered is None or departement in covered  # files before Sprint 20: one department
+
+    def secteurs_geojson(self, with_scores: bool = True, departement: str | None = None) -> dict[str, Any]:
+        """Sectors (of one department: those covering part of it), with the scores of the
+        schools they serve. All of France is ~12 MB: the map asks for one department."""
+        selected = [f for f in self.secteurs["features"] if self._in_department(f, departement)]
         if not with_scores:
-            return self.secteurs
+            return {"type": "FeatureCollection", "features": selected}
         # Attach the score of the school(s) that serve each sector.
         by_sector: dict[str, list[dict[str, Any]]] = {}
         for uai, r in self._risk_rows.items():
@@ -153,7 +163,7 @@ class DataStore:
                     {"uai": uai, "nom": r["nom"], **self._score_only(uai)}
                 )
         features = []
-        for f in self.secteurs["features"]:
+        for f in selected:
             sid = f["properties"]["secteur_id"]
             schools = by_sector.get(sid, [])
             max_score = max((s["score_global"] for s in schools), default=None)
@@ -174,16 +184,32 @@ class DataStore:
 
     # ---- stats ----------------------------------------------------------
     def territories(self) -> list[dict[str, Any]]:
-        """Departments present in the data, with their académie and number of schools."""
+        """Departments present in the data: académie, schools, incomplete evaluations, mean
+        score and high-risk schools (the national map's colours), and where the sectors
+        come from (each department shows the origin of its outlines)."""
         out: dict[str, dict[str, Any]] = {}
         for r in self._risk_rows.values():
             code = r.get("departement")
+            profile = self._profiles[r["uai"]]
             entry = out.setdefault(code, {
                 "code": code, "nom": r.get("departement_nom"), "academie": r.get("academie"),
-                "colleges": 0, "lacunes": 0,
+                "colleges": 0, "lacunes": 0, "eleve": 0, "score_moyen": 0.0,
+                "secteurs": {"total": 0, "par_source": {}},
             })
             entry["colleges"] += 1
-            entry["lacunes"] += bool(self._profiles[r["uai"]]["lacunes"])
+            entry["lacunes"] += bool(profile["lacunes"])
+            entry["eleve"] += profile["niveau"] == "eleve"
+            entry["score_moyen"] += profile["score_global"]
+        for f in self.secteurs["features"]:
+            props = f["properties"]
+            for code in props.get("departements") or list(out)[:1]:  # old files: one department
+                if code in out:
+                    sectors = out[code]["secteurs"]
+                    source = props.get("source") or "departement"
+                    sectors["total"] += 1
+                    sectors["par_source"][source] = sectors["par_source"].get(source, 0) + 1
+        for entry in out.values():
+            entry["score_moyen"] = round(entry["score_moyen"] / entry["colleges"], 1)
         return sorted(out.values(), key=lambda t: t["code"] or "")
 
     def stats(self, departement: str | None = None) -> dict[str, Any]:

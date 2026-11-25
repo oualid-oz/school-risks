@@ -21,6 +21,10 @@ const nf = new Intl.NumberFormat("fr-FR");
 let map;
 let mapBounds = null;
 let sectorBounds = null;
+let sectorLayer = null; // the sectors of the selected department (one at a time)
+let departmentLayer = null; // national view: departments coloured by mean score
+let departmentShapes = null; // GeoJSON of the department outlines (static file)
+const sectorCache = new Map(); // department code ("" for all) → sectors GeoJSON
 let schoolLayer = null; // the school markers' group
 let mapNeedsFit = false;
 let schools = [];
@@ -239,6 +243,7 @@ function updateTerritoryHeading() {
     ? `${current.nom} (${current.code}) · académie ${current.academie || "—"}`
     : territories.length === 1 ? `${territories[0].nom} (${territories[0].code})` : `${territories.length} départements`;
   document.getElementById("territory-heading").textContent = `Risques naturels et technologiques des collèges · ${scope}`;
+  updateSectorSource(current);
   const gaps = current ? current.lacunes : territories.reduce((n, t) => n + t.lacunes, 0);
   const note = document.getElementById("territory-gaps");
   if (note) note.remove();
@@ -249,8 +254,35 @@ function updateTerritoryHeading() {
   }
 }
 
+const SECTOR_SOURCES = {
+  departement: "carte des secteurs publiée par le département",
+  carte_scolaire: "carte scolaire nationale, communes entières",
+  carte_scolaire_approchee: "carte scolaire nationale, découpage approché dans les communes partagées",
+  mixte: "carte du département et carte scolaire nationale",
+};
+
+// Where the outlines of the selected department come from (each department says so).
+function sectorSourceText(t) {
+  const sectors = t?.secteurs;
+  if (!sectors || !sectors.total) return "Secteurs : aucune source pour ce département (pas de carte scolaire publiée).";
+  const parts = Object.entries(sectors.par_source)
+    .sort((a, b) => b[1] - a[1])
+    .map(([source, n]) => `${nf.format(n)} ${SECTOR_SOURCES[source] || source}`);
+  return `Secteurs (${nf.format(sectors.total)}) : ${parts.join(" ; ")}.`;
+}
+
+function updateSectorSource(current) {
+  document.getElementById("sector-source")?.remove();
+  const t = current || (territories.length === 1 ? territories[0] : null);
+  if (!t) return;
+  const note = element("p", "sector-source", sectorSourceText(t));
+  note.id = "sector-source";
+  document.getElementById("territory-heading").after(note);
+}
+
 async function selectTerritory(code) {
   selectedDepartement = code;
+  document.getElementById("territory-select").value = code || "";
   try {
     if (code) localStorage.setItem(TERRITORY_KEY, code);
     else localStorage.removeItem(TERRITORY_KEY);
@@ -265,16 +297,56 @@ async function selectTerritory(code) {
   }
 }
 
-function applyTerritoryToMap() {
+// National view (several departments, none selected): departments coloured by mean score,
+// no sectors. Department view (or a single-department deployment): its sectors.
+function nationalView() {
+  return territories.length > 1 && !selectedDepartement;
+}
+
+async function applyTerritoryToMap() {
   if (!map) return;
   const shown = visibleSchools();
   const points = shown.map((s) => [s.lat, s.lon]);
   let bounds = points.length ? L.latLngBounds(points) : null;
-  if (!selectedDepartement && sectorBounds) bounds = bounds ? bounds.extend(sectorBounds) : sectorBounds;
+  const national = nationalView();
+  if (departmentLayer) {
+    if (national && !map.hasLayer(departmentLayer)) departmentLayer.addTo(map);
+    if (!national && map.hasLayer(departmentLayer)) departmentLayer.remove();
+    if (national) departmentLayer.bringToBack();
+  }
   mapBounds = bounds;
   mapNeedsFit = true;
   fitMapToSelection(); // shows/hides the markers once the map has a view
   document.getElementById("map-count").textContent = `${nf.format(shown.length)} collèges`;
+  const wanted = national ? null : (selectedDepartement || "");
+  await showSectors(wanted);
+  if (!national && sectorBounds && sectorLayer.getLayers().length) {
+    mapBounds = bounds ? bounds.extend(sectorBounds) : sectorBounds;
+    mapNeedsFit = true;
+    fitMapToSelection();
+  }
+}
+
+async function showSectors(code) {
+  if (!sectorLayer) return;
+  sectorLayer.clearLayers();
+  sectorBounds = null;
+  if (code === null) return;
+  let geojson = sectorCache.get(code);
+  if (!geojson) {
+    try {
+      geojson = await getJson(`/secteurs?with_scores=true${code ? `&departement=${encodeURIComponent(code)}` : ""}`);
+      sectorCache.set(code, geojson);
+    } catch (error) {
+      showError("dashboard-error", `Impossible de charger les secteurs : ${error.message}`);
+      return;
+    }
+  }
+  if (code !== (nationalView() ? null : (selectedDepartement || ""))) return; // selection changed meanwhile
+  sectorLayer.addData(geojson);
+  sectorLayer.bringToBack();
+  const bounds = sectorLayer.getBounds();
+  sectorBounds = bounds.isValid() ? bounds : null;
 }
 
 // Leaflet cannot take layers before the map has a view: change the markers only after a fit,
@@ -419,16 +491,41 @@ function popupContent(school) {
   return popup;
 }
 
-function renderMap(geojson) {
+function renderMap() {
   if (!window.L) throw new Error("La bibliothèque cartographique n’a pas pu être chargée.");
   if (map) map.remove(); // a second login re-renders the dashboard
-  map = L.map("map", { scrollWheelZoom: false, zoomControl: true });
+  // Canvas: thousands of school dots stay fluid, on a phone too.
+  map = L.map("map", { scrollWheelZoom: false, zoomControl: true, preferCanvas: true });
   L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
     attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
     maxZoom: 18,
   }).addTo(map);
 
-  const sectors = L.geoJSON(geojson, {
+  if (departmentShapes) {
+    departmentLayer = L.geoJSON(departmentShapes, {
+      filter: (feature) => territories.some((t) => t.code === feature.properties.code),
+      style: (feature) => {
+        const t = territories.find((x) => x.code === feature.properties.code);
+        return { color: "#5d6b63", weight: 1, opacity: 0.8, fillColor: riskColor(t?.score_moyen), fillOpacity: 0.35 };
+      },
+      onEachFeature: (feature, layer) => {
+        const t = territories.find((x) => x.code === feature.properties.code);
+        layer.bindTooltip(() => {
+          const box = element("div", "map-popup");
+          box.append(
+            element("strong", "", `${t.nom} (${t.code})`),
+            element("small", "", `${nf.format(t.colleges)} collèges · score moyen ${t.score_moyen}/100 · ${nf.format(t.eleve)} élevé(s)`),
+            element("small", "", sectorSourceText(t))
+          );
+          return box;
+        }, { sticky: true });
+        layer.on("click", () => selectTerritory(t.code));
+      },
+      bubblingMouseEvents: false, // a click opens the department, not a point search
+    });
+  }
+
+  const sectors = L.geoJSON(null, {
     style: (feature) => {
       const score = feature.properties.score_max;
       return { color: riskColor(score), weight: 1.2, opacity: 0.9, fillColor: riskColor(score), fillOpacity: score == null ? 0.12 : 0.25 };
@@ -441,6 +538,7 @@ function renderMap(geojson) {
       layer.bindTooltip(`${props.secteur || `Secteur ${props.secteur_id}`} · ${score}`, { sticky: true });
     },
   }).addTo(map);
+  sectorLayer = sectors;
   enableMapPointSelection(); // spatial.js
 
   const markerGroup = L.featureGroup();
@@ -456,32 +554,37 @@ function renderMap(geojson) {
       fillOpacity: 1,
       bubblingMouseEvents: false, // a click on a school opens its popup, not a point search
     });
-    marker.bindPopup(popupContent(school));
-    marker.bindTooltip(element("span", "", school.nom), { direction: "top", offset: [0, -6] });
+    marker.bindPopup(() => popupContent(school)); // built on demand: thousands of schools
+    marker.bindTooltip(() => element("span", "", school.nom), { direction: "top", offset: [0, -6] });
     marker.addTo(markerGroup);
     schoolMarkers.push({ marker, school });
   });
   markerGroup.addTo(map);
+  // Smaller dots when a region or more is in view: restyle only when crossing that zoom.
+  let wasFar = null;
+  map.on("zoomend", () => {
+    const far = map.getZoom() < 8;
+    if (far !== wasFar) { wasFar = far; styleMarkers(); }
+  });
   styleMarkers();
-  const bounds = sectors.getBounds();
-  sectorBounds = bounds.isValid() ? bounds : null;
-  mapBounds = sectorBounds;
   mapNeedsFit = true;
-  fitMapToSelection();
 }
 
 // In priority mode the dot's area is proportional to the index (radius ∝ √index), so a
 // big school with a medium score stands out; the colour always stays the risk level.
 function markerRadius(school) {
-  if (rankingMode !== "priorite") return 6;
+  const far = map && map.getZoom() < 8; // a whole region or more: dots, not discs
+  if (rankingMode !== "priorite") return far ? 3 : 6;
+  if (far) return school.indice_priorite == null ? 2 : Math.max(2, Math.min(8, 0.3 * Math.sqrt(school.indice_priorite)));
   if (school.indice_priorite == null) return 4;
   return Math.max(4, Math.min(22, 0.85 * Math.sqrt(school.indice_priorite)));
 }
 
 function styleMarkers() {
+  schoolMarkers.forEach(({ marker, school }) => marker.setRadius(markerRadius(school)));
+  if (rankingMode !== "priorite") return; // same size everywhere: no order to set
   const ordered = [...schoolMarkers].sort((a, b) => markerRadius(b.school) - markerRadius(a.school));
-  ordered.forEach(({ marker, school }) => {
-    marker.setRadius(markerRadius(school));
+  ordered.forEach(({ marker }) => {
     if (schoolLayer?.hasLayer(marker) && map.hasLayer(marker)) marker.bringToFront(); // small ones on top
   });
 }
@@ -1016,18 +1119,19 @@ async function init() {
 async function loadDashboard() {
   try {
     await loadThresholds(); // before anything is coloured
-    const [territoryData, sectorData, collegeData] = await Promise.all([
-      getJson("/territoires"),
-      getJson("/secteurs?with_scores=true"),
-      getJson("/colleges"),
-    ]);
+    const [territoryData, collegeData] = await Promise.all([getJson("/territoires"), getJson("/colleges")]);
     territories = territoryData;
     schools = collegeData;
+    if (territories.length > 1 && !departmentShapes) {
+      const response = await fetch("/departements.geojson"); // static outlines, cached by the browser
+      if (response.ok) departmentShapes = await response.json();
+    }
     setupTerritorySelector();
     renderStats(await getJson(statsPath()));
     renderSchoolList(schools);
-    renderMap(sectorData);
-    applyTerritoryToMap();
+    sectorCache.clear(); // scores may have changed since the last login
+    renderMap();
+    await applyTerritoryToMap();
     if (location.hash) route();
   } catch (error) {
     showError("dashboard-error", `Impossible de charger le tableau de bord : ${error.message}`);

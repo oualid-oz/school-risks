@@ -20,10 +20,12 @@ router = APIRouter(
 def secteurs_geojson(
     request: Request,
     with_scores: bool = True,
+    departement: str | None = Query(default=None, max_length=3),
     store: DataStore = Depends(get_store),
 ):
-    """GeoJSON FeatureCollection of catchment areas, ready for Leaflet/MapLibre."""
-    return store.secteurs_geojson(with_scores)
+    """GeoJSON FeatureCollection of catchment areas, ready for Leaflet/MapLibre. With
+    `departement`, only the sectors covering part of it (the map loads one at a time)."""
+    return store.secteurs_geojson(with_scores, departement)
 
 
 @router.get("/localiser", response_model=dict[str, Any])

@@ -17,7 +17,7 @@ from sqlalchemy.engine import Engine
 
 from app.core.config import settings
 from app.data.schema import HISTORY_SCHEMA, RISQUES_SCHEMA
-from app.pipeline import bulk, education, georisques, hazards, nuclear, sectors
+from app.pipeline import bulk, education, georisques, hazards, nuclear, school_map, sectors
 from app.pipeline.client import Fetcher
 from app.pipeline.geo import haversine_km, nearest_centrale
 from app.services.scoring import compute_risk_profile
@@ -122,6 +122,8 @@ class BuildResult:
     history: pd.DataFrame
     notes: list[str] = field(default_factory=list)
     secteurs: dict[str, Any] | None = None  # None: keep the published sectors file
+    # Per department: where its sectors come from, how many, how many approximate.
+    sector_coverage: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 
 def _typed(rows: list[dict[str, Any]], schema: dict[str, str]) -> pd.DataFrame:
@@ -307,13 +309,46 @@ def build(
                  + (f"; unknown for the {without} new schools" if without else ""))
 
     secteurs, covered = sectors.fetch_for(fetcher, departements)
-    missing_sectors = [d for d in departements if d not in covered]
-    notes.append(f"Sectors refreshed for {covered or 'no department'} "
-                 f"({len(secteurs['features'])} sectors)"
-                 + (f"; no source yet for {missing_sectors} (Sprint 20)" if missing_sectors else "") + ".")
+    coverage: dict[str, dict[str, Any]] = {
+        d: {"source": "departement", "sectors": sum(1 for f in secteurs["features"]
+                                                   if d in f["properties"]["departements"]),
+            "approximate": 0}
+        for d in covered
+    }
+    if bulk_engine is not None:
+        dl = bulk.Downloader(bulk_cache or settings.data_dir / "raw" / "bulk", offline=offline)
+        try:
+            school_map.load(bulk_engine, dl, schools)
+        finally:
+            dl.close()
+        extra, from_map = school_map.build(bulk_engine, {s["uai"]: s for s in schools}, covered)
+        wanted = set(departements)
+        extra = [f for f in extra if wanted & set(f["properties"]["departements"])]
+        secteurs = sectors.merge(secteurs, extra)
+        for d in departements:
+            if d not in coverage and d in from_map:
+                coverage[d] = {"source": "carte_scolaire", **from_map[d]}
+    missing_sectors = [d for d in departements if d not in coverage]
+    notes.append(f"Sectors: {len(secteurs['features'])}; departments with their own map: "
+                 f"{covered or 'none'}" + (f"; no source for {_capped(missing_sectors)}"
+                                           if missing_sectors else "") + ".")
+
+    # A public collège gets its own sector when one exists (published schools keep theirs).
+    ids = {f["properties"]["secteur_id"] for f in secteurs["features"]}
+    for row in rows:
+        if not row["secteur_id"] and row["statut"].lower().startswith("pub") and row["uai"] in ids:
+            row["secteur_id"] = row["uai"]
+    orphans: dict[str, int] = {}
+    for row in rows:
+        if row["statut"].lower().startswith("pub") and not row["secteur_id"]:
+            orphans[row["departement"]] = orphans.get(row["departement"], 0) + 1
+    if orphans:
+        notes.append(f"Public collèges without a sector ({sum(orphans.values())}): "
+                     + ", ".join(f"{d}: {n}" for d, n in sorted(orphans.items())))
     if keep:
         notes.append(f"Kept from the previous file on request (--keep): {keep}")
-    return BuildResult(_typed(rows, RISQUES_SCHEMA), history, notes, secteurs=secteurs)
+    return BuildResult(_typed(rows, RISQUES_SCHEMA), history, notes, secteurs=secteurs,
+                       sector_coverage=coverage)
 
 
 # ---- validation ---------------------------------------------------------------
@@ -475,6 +510,14 @@ def _by_department(
     return out
 
 
+def _sector_cell(coverage: dict[str, Any] | None) -> str:
+    if not coverage:
+        return "none"
+    if coverage["source"] == "departement":
+        return f"department map ({coverage['sectors']})"
+    return f"school map ({coverage['sectors']}, {coverage['approximate']} approx.)"
+
+
 REPORT_MAX_LINES = 50  # a national refresh must still give a readable report
 
 
@@ -508,13 +551,15 @@ def render_report(
     if len(deps) > 1:
         lines += [
             "", "## Per department", "",
-            "| Dept | Schools | Before | Added | Removed | Level changes | Mean score | High | Incomplete |",
-            "|---|---|---|---|---|---|---|---|---|",
+            "| Dept | Schools | Before | Added | Removed | Level changes | Mean score | High | Incomplete "
+            "| Sectors |",
+            "|---|---|---|---|---|---|---|---|---|---|",
         ]
         lines += [
             f"| {d['departement']} | {d['schools']} | {d['previous']} | {d['added']} | {d['removed']} "
             f"| {d['level_changes']} | {d['mean_score'] if d['mean_score'] is not None else '–'} "
-            f"| {d['eleve']} | {d['incomplete']} |"
+            f"| {d['eleve']} | {d['incomplete']} "
+            f"| {_sector_cell(result.sector_coverage.get(d['departement']))} |"
             for d in deps
         ]
 
@@ -545,10 +590,10 @@ def render_report(
     sec = diff.get("secteurs")
     if sec is not None:
         lines += ["", "## Catchment sectors", ""]
-        lines.append(f"- Added: {len(sec['added'])} {sec['added'] or ''}")
-        lines.append(f"- Removed: {len(sec['removed'])} {sec['removed'] or ''}")
+        lines.append(f"- Added: {len(sec['added'])} {_capped(sec['added'])}")
+        lines.append(f"- Removed: {len(sec['removed'])} {_capped(sec['removed'])}")
         changed = sec["changed"]
-        lines.append(f"- Area changed by more than 1 % or renamed: {len(changed)} {changed or ''}")
+        lines.append(f"- Area changed by more than 1 % or renamed: {len(changed)} {_capped(changed)}")
 
     h = diff.get("history")
     if h is not None:
