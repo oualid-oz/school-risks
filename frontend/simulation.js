@@ -154,9 +154,6 @@ function renderSimulation(result) {
       ["Niveau", (r) => levelChange(r)],
     ])
     : element("p", "empty-state", "Aucun collège ne change de niveau."));
-
-  document.getElementById("simulation-env").textContent =
-    Object.entries(result.variables).map(([key, value]) => `${key}=${value}`).join("\n");
 }
 
 function fmt(value) {

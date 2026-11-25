@@ -345,7 +345,7 @@ Everything below is a setting, so the outcome of a review is applied without cod
 | `SRT_SEISME_POINTS` | `{"1":0,"2":25,"3":50,"4":75,"5":100}` | Points of each earthquake zone |
 | `SRT_RADON_POINTS` | `{"1":0,"2":20,"3":60}` | Points of each radon class |
 
-The **Simulation** page (`#simulation`, `POST /scores/simulation`) covers every weight and points scale. It recomputes every school with other values and shows, next to today's, the levels, the top 10 and the schools changing level, then the exact variables to set. Nothing is saved. The map colours, the legend, the PDF and the email digests all follow the configured thresholds.
+The **Simulation** page (`#simulation`, `POST /scores/simulation`) covers every weight and points scale. It recomputes every school with other values and shows, next to today's, the levels, the top 10 and the schools changing level. Nothing is saved or applied. The page does not show technical settings: adopting new values goes through whoever deploys. `POST /scores/simulation` still returns the matching `SRT_*` variables (`variables`) for them. The map colours, the legend, the PDF and the email digests all follow the configured thresholds.
 With the current thresholds the 70 schools split into 30 faible, 29 moyen and 11 eleve.
 
 ### Priority index (pupils exposed)

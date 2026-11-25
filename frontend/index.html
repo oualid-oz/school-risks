@@ -232,7 +232,7 @@
           <div>
             <p class="eyebrow">RÉVISION DES SCORES</p>
             <h1>Simulation</h1>
-            <p class="subheading">Modifiez les poids, les seuils et les points des classes d’argiles : les niveaux et le classement simulés s’affichent à côté de ceux d’aujourd’hui. Rien n’est enregistré.</p>
+            <p class="subheading">Modifiez les poids, les seuils et les points des classes (argiles, sismicité, radon) : les niveaux et le classement simulés s’affichent à côté de ceux d’aujourd’hui. Rien n’est enregistré ni appliqué : pour adopter de nouveaux paramètres après validation, transmettez-les à l’équipe technique.</p>
           </div>
         </div>
         <div id="simulation-error" class="error-banner" role="alert" hidden></div>
@@ -252,11 +252,6 @@
             <div id="simulation-summary" class="simulation-summary"></div>
             <section class="panel detail-panel"><h2>Top 10</h2><div id="simulation-top"></div></section>
             <section class="panel detail-panel"><h2 id="simulation-changes-title">Changements de niveau</h2><div id="simulation-changes"></div></section>
-            <section class="panel detail-panel">
-              <h2>Pour appliquer ces paramètres</h2>
-              <p class="panel-caption">Les reporter dans les variables d’environnement (Vercel ou <code>.env</code>), puis redémarrer ou redéployer. Pensez à faire valider le nouveau classement avant.</p>
-              <pre id="simulation-env" class="env-block"></pre>
-            </section>
           </div>
         </div>
       </section>

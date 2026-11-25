@@ -308,16 +308,15 @@ def test_simulation_page(admin_page):
     summary = page.locator("#simulation-summary")
     expect(summary.locator(".sim-card").first).to_contain_text("0")  # today's values: no change
     expect(page.locator("#simulation-top tbody tr")).to_have_count(10)
-    expect(page.locator("#simulation-env")).to_contain_text("SRT_SEUIL_ELEVE=50")
+    expect(page.locator("#simulation-page")).not_to_contain_text("SRT_")  # no technical settings shown
 
     page.get_by_label("Élevé à partir de (valeur)").fill("40")
-    expect(page.locator("#simulation-env")).to_contain_text("SRT_SEUIL_ELEVE=40")
     expect(page.locator("#simulation-changes tbody tr").first).to_be_visible()
     assert int(summary.locator(".sim-card strong").first.inner_text()) > 0
     expect(page.locator("#simulation-changes")).to_contain_text("→")
 
     page.get_by_role("button", name="Revenir aux valeurs actuelles").click()
-    expect(page.locator("#simulation-env")).to_contain_text("SRT_SEUIL_ELEVE=50")
+    expect(page.get_by_label("Élevé à partir de (valeur)")).to_have_value("50")
     expect(page.locator("#simulation-changes")).to_contain_text("Aucun collège ne change de niveau")
     assert page.evaluate("thresholds.eleve") == 50  # the real thresholds are untouched
 
