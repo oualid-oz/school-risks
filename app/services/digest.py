@@ -1,7 +1,8 @@
 """Weekly email digest: overdue actions, actions due soon, PPMS to update.
 
-Referents get their schools, admins the whole department. Only active users who opted in
-(`alertes_email`) and gave an address receive it; readers (lecteur) never do.
+Referents get their schools, admins their area (all schools for a national admin). Only
+active users who opted in (`alertes_email`) and gave an address receive it; readers
+(lecteur) never do.
 
 Idempotency: one `notification_log` row per (user, kind, ISO week). A run claims the row
 before sending, so a second run in the same week, or two overlapping runs, never send twice.
@@ -150,7 +151,14 @@ def render(user: User, digest: Digest, scope: str, today: date) -> Email:
 
 def digest_for(session: Session, store: DataStore, user: User, today: date) -> Email | None:
     if user.role == UserRole.admin:
-        uais, scope = store.uais(), "l'ensemble des collèges suivis"
+        from app.core.scope import user_area
+
+        area = user_area(session, user)
+        if area:  # department or academy admin: their area only
+            uais = [u for u in store.uais() if (store.get_college(u) or {}).get("departement") in area]
+            scope = f"les collèges de votre périmètre ({', '.join(sorted(area))})"
+        else:
+            uais, scope = store.uais(), "l'ensemble des collèges suivis"
     elif user.role == UserRole.referent:
         uais = sorted(assigned_schools(session, user))
         scope = f"vos {len(uais)} collège(s)" if len(uais) > 1 else "votre collège"

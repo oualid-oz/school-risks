@@ -88,6 +88,10 @@ def get_current_user(
         or payload["pwd"] != _password_fingerprint(user)
     ):
         raise unauthorized
+    # Give the connection back while the request waits for a worker thread: under load,
+    # requests queue there, and each would otherwise hold a pooled connection while waiting.
+    # The user stays usable (loaded, detached); the endpoint's queries take a connection again.
+    session.close()
     return user
 
 
@@ -140,8 +144,20 @@ def record_audit(
             if details is not None
             else None,
             remote_addr=request.client.host if request.client else None,
+            departement=_departement_of(resource_type, resource_id, details),
         )
     )
+
+
+def _departement_of(resource_type: str, resource_id: str | int, details: dict[str, Any] | None) -> str | None:
+    """The department of the school an event is about (from its UAI), for scoped audit views."""
+    from app.data.store import get_store
+
+    uai = (details or {}).get("uai") or (str(resource_id) if resource_type == "college" else None)
+    if not isinstance(uai, str):
+        return None
+    college = get_store().get_college(uai)
+    return college.get("departement") if college else None
 
 
 def bootstrap_admin() -> None:

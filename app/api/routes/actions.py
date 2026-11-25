@@ -1,18 +1,13 @@
 """CRUD for follow-up actions: the 'tracking' part of the app."""
 from datetime import UTC, date, datetime
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Response
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, Response
 from sqlmodel import Session, select
 
 from app.api.routes.auth import limiter
 from app.core.config import settings
-from app.core.security import (
-    assigned_schools,
-    get_current_user,
-    record_audit,
-    require_roles,
-    require_school_access,
-)
+from app.core.scope import Scope, get_scope, scope_for
+from app.core.security import record_audit, require_roles
 from app.data.store import DataStore, get_store
 from app.db import get_session
 from app.models.security import User, UserRole
@@ -55,15 +50,21 @@ def _to_read(session: Session, a: Action) -> ActionRead:
     return _read_many(session, [a])[0]
 
 
-def _check_assignee(session: Session, uai: str, user_id: int | None) -> None:
-    """Actions can be assigned to an active admin or a referent of the school."""
+def _can_follow(session: Session, store: DataStore, person: User, uai: str) -> bool:
+    """An active admin whose area covers the school, or a referent of the school."""
+    return (
+        person.active
+        and person.role in (UserRole.admin, UserRole.referent)
+        and scope_for(session, store, person).manages(store, uai)
+    )
+
+
+def _check_assignee(session: Session, store: DataStore, uai: str, user_id: int | None) -> None:
+    """Actions can be assigned to an active admin of the area or a referent of the school."""
     if user_id is None:
         return
     assignee = session.get(User, user_id)
-    allowed = assignee is not None and assignee.active and (
-        assignee.role == UserRole.admin
-        or (assignee.role == UserRole.referent and uai in assigned_schools(session, assignee))
-    )
+    allowed = assignee is not None and _can_follow(session, store, assignee, uai)
     if not allowed:
         raise HTTPException(422, "Cette personne ne peut pas suivre les actions de ce collège")
 
@@ -89,31 +90,44 @@ def list_actions(
     statut: Statut | None = None,
     priorite: Priorite | None = None,
     en_retard: bool | None = None,
+    limit: int | None = Query(None, ge=1, le=1000, description="Page size (default: everything)"),
+    offset: int = Query(0, ge=0),
+    response: Response = None,
     session: Session = Depends(get_session),
-    user: User = Depends(get_current_user),
+    store: DataStore = Depends(get_store),
+    scope: Scope = Depends(get_scope),
 ):
-    return find_actions(session, user, uai, alea, statut, priorite, en_retard)
+    """Actions of the user's area, oldest due date first. The total before paging is in the
+    `X-Total-Count` header."""
+    actions = find_actions(session, scope, store, uai, alea, statut, priorite, en_retard)
+    session.close()  # done with the database: free the connection before serialising
+    response.headers["X-Total-Count"] = str(len(actions))
+    return actions[offset:offset + limit] if limit else actions[offset:]
 
 
 def find_actions(
     session: Session,
-    user: User,
+    scope: Scope,
+    store: DataStore,
     uai: str | None = None,
     alea: Alea | None = None,
     statut: Statut | None = None,
     priorite: Priorite | None = None,
     en_retard: bool | None = None,
 ) -> list[ActionRead]:
-    """Actions visible to `user` (referents: their schools only), oldest due date first.
+    """Actions visible in `scope` (referents: their schools only), oldest due date first.
     Shared by the list and the CSV export so both apply the same access rules."""
     stmt = select(Action)
-    if user.role == UserRole.referent:
-        school_uais = assigned_schools(session, user)
-        if uai and uai not in school_uais:
+    if scope.user.role == UserRole.referent:
+        if uai and uai not in scope.managed:
             raise HTTPException(status_code=403, detail="Pas d’accès aux actions de ce collège")
-        if not school_uais:
+        if not scope.managed:
             return []
-        stmt = stmt.where(Action.uai.in_(school_uais))
+        stmt = stmt.where(Action.uai.in_(scope.managed))
+    elif uai:
+        scope.require_visible(store, uai)
+    elif not scope.national:
+        stmt = stmt.where(Action.uai.in_(scope.visible_uais(store)))
     if uai:
         stmt = stmt.where(Action.uai == uai)
     if alea:
@@ -137,11 +151,12 @@ def create_action(
     session: Session = Depends(get_session),
     store: DataStore = Depends(get_store),
     user: User = Depends(require_roles(UserRole.admin, UserRole.referent)),
+    scope: Scope = Depends(get_scope),
 ):
-    require_school_access(session, user, payload.uai)
     if not store.exists(payload.uai):
         raise HTTPException(422, f"UAI de collège inconnu : {payload.uai}")
-    _check_assignee(session, payload.uai, payload.responsable_user_id)
+    scope.require_managed(store, payload.uai)
+    _check_assignee(session, store, payload.uai, payload.responsable_user_id)
     action = Action.model_validate(payload)
     session.add(action)
     session.flush()
@@ -161,10 +176,12 @@ def assignable_users(
     request: Request,
     uai: str,
     session: Session = Depends(get_session),
+    store: DataStore = Depends(get_store),
     user: User = Depends(require_roles(UserRole.admin, UserRole.referent)),
+    scope: Scope = Depends(get_scope),
 ):
-    """People an action of this school can be assigned to (admins and its referents)."""
-    require_school_access(session, user, uai)
+    """People an action of this school can be assigned to (admins of its area, its referents)."""
+    scope.require_managed(store, uai)
     users = session.exec(
         select(User).where(User.active.is_(True), User.role.in_([UserRole.admin, UserRole.referent]))
         .order_by(User.username)
@@ -172,7 +189,7 @@ def assignable_users(
     return [
         {"id": u.id, "username": u.username, "role": u.role.value}
         for u in users
-        if u.role == UserRole.admin or uai in assigned_schools(session, u)
+        if _can_follow(session, store, u, uai)
     ]
 
 
@@ -182,12 +199,10 @@ def get_action(
     action_id: int,
     request: Request,
     session: Session = Depends(get_session),
-    user: User = Depends(get_current_user),
+    store: DataStore = Depends(get_store),
+    scope: Scope = Depends(get_scope),
 ):
-    action = _get_or_404(session, action_id)
-    if user.role == UserRole.referent:
-        require_school_access(session, user, action.uai)
-    return _to_read(session, action)
+    return _to_read(session, _readable(session, scope, store, action_id))
 
 
 @router.patch("/{action_id}", response_model=ActionRead)
@@ -198,13 +213,15 @@ def update_action(
     request: Request,
     background: BackgroundTasks,
     session: Session = Depends(get_session),
+    store: DataStore = Depends(get_store),
     user: User = Depends(require_roles(UserRole.admin, UserRole.referent)),
+    scope: Scope = Depends(get_scope),
 ):
     action = _get_or_404(session, action_id)
-    require_school_access(session, user, action.uai)
+    scope.require_managed(store, action.uai)
     changes = payload.model_dump(exclude_unset=True)
     if "responsable_user_id" in changes:
-        _check_assignee(session, action.uai, changes["responsable_user_id"])
+        _check_assignee(session, store, action.uai, changes["responsable_user_id"])
     before, previous_assignee = history.snapshot(action), action.responsable_user_id
     for key, value in changes.items():
         setattr(action, key, value)
@@ -232,10 +249,12 @@ def delete_action(
     action_id: int,
     request: Request,
     session: Session = Depends(get_session),
+    store: DataStore = Depends(get_store),
     user: User = Depends(require_roles(UserRole.admin, UserRole.referent)),
+    scope: Scope = Depends(get_scope),
 ):
     action = _get_or_404(session, action_id)
-    require_school_access(session, user, action.uai)
+    scope.require_managed(store, action.uai)
     record_audit(
         session, request, user, "action.deleted", "action", action.id, {"uai": action.uai}
     )
@@ -246,10 +265,13 @@ def delete_action(
 
 
 # ---- timeline and comments ------------------------------------------------------------
-def _readable(session: Session, user: User, action_id: int) -> Action:
+def _readable(session: Session, scope: Scope, store: DataStore, action_id: int) -> Action:
+    """Referents read their schools' actions; others, those of their area (else 404)."""
     action = _get_or_404(session, action_id)
-    if user.role == UserRole.referent:
-        require_school_access(session, user, action.uai)
+    if scope.user.role == UserRole.referent:
+        scope.require_managed(store, action.uai)
+    elif not scope.sees(store, action.uai):
+        raise HTTPException(404, f"Action {action_id} introuvable")
     return action
 
 
@@ -259,11 +281,12 @@ def action_timeline(
     action_id: int,
     request: Request,
     session: Session = Depends(get_session),
-    user: User = Depends(get_current_user),
+    store: DataStore = Depends(get_store),
+    scope: Scope = Depends(get_scope),
 ):
     """Creation, changes (old → new) and comments, newest first."""
-    _readable(session, user, action_id)
-    return history.timeline(session, action_id, user)
+    _readable(session, scope, store, action_id)
+    return history.timeline(session, action_id, scope.user)
 
 
 @router.post("/{action_id}/commentaires", response_model=ActionEventRead, status_code=201)
@@ -273,11 +296,13 @@ def add_comment(
     payload: CommentCreate,
     request: Request,
     session: Session = Depends(get_session),
+    store: DataStore = Depends(get_store),
     user: User = Depends(require_roles(UserRole.admin, UserRole.referent)),
+    scope: Scope = Depends(get_scope),
 ):
-    """Admins and the school's referents comment (readers only read)."""
+    """Admins of the area and the school's referents comment (readers only read)."""
     action = _get_or_404(session, action_id)
-    require_school_access(session, user, action.uai)
+    scope.require_managed(store, action.uai)
     if not payload.texte.strip():
         raise HTTPException(422, "Le commentaire est vide")
     event = history.add_comment(session, action, user, payload.texte)
@@ -296,11 +321,13 @@ def delete_comment(
     event_id: int,
     request: Request,
     session: Session = Depends(get_session),
+    store: DataStore = Depends(get_store),
     user: User = Depends(require_roles(UserRole.admin, UserRole.referent)),
+    scope: Scope = Depends(get_scope),
 ):
     """Its author or an admin; the deletion (with the text) stays in the audit log."""
     action = _get_or_404(session, action_id)
-    require_school_access(session, user, action.uai)
+    scope.require_managed(store, action.uai)
     event = session.get(ActionEvent, event_id)
     if event is None or event.action_id != action_id or event.kind != "commentaire":
         raise HTTPException(404, "Commentaire introuvable")

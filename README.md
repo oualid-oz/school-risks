@@ -54,13 +54,25 @@ docker compose up -d --build
 | `db` | PostGIS 17 (data in the `pgdata` volume) |
 | `redis` | Rate-limit counters, shared by all API workers |
 | `migrate` | One-shot: `alembic upgrade head`, then loads the reference data shipped in the image. The API starts only if it succeeds |
-| `api` | uvicorn, `WEB_CONCURRENCY` workers (default 2), non-root, read-only filesystem, published on `127.0.0.1:8000` |
+| `api` | uvicorn, `WEB_CONCURRENCY` workers (default 2; 4 for all of France, see below), non-root, read-only filesystem, published on `127.0.0.1:8000` |
 | `backup` | `pg_dump` at startup and then daily into `./backups`, keeps 14 days |
 
 The API port is bound to `127.0.0.1`: put a reverse proxy with TLS in front (Caddy, nginx, Traefik), add the public URL to `SRT_CORS_ORIGINS`, and the proxy's IP to `SRT_TRUSTED_PROXIES` so rate limits and the audit log see real client IPs.
 Image tag and `/health` version: `BUILD_VERSION=$(git describe --always) docker compose up -d --build`.
 To refresh the reference data: run the pipeline on a workstation, commit the new `data/*.parquet`, rebuild and redeploy (`migrate` reloads them).
 Yearly snapshot inside the stack: `docker compose run --rm api python -m app.pipeline snapshot`.
+
+**Capacity (all of France loaded).** Per worker process: about 370 MB of memory, 5.5 s to start, up to `SRT_WORKER_THREADS` (16) requests computing at once, and `SRT_DB_POOL_SIZE` + `SRT_DB_MAX_OVERFLOW` (10 + 10) database connections. Keep `WEB_CONCURRENCY` × 20 below Postgres's `max_connections` (100 by default).
+
+`deploy/load_test.py` creates test accounts (national and department admins, referents and readers) and loads the dashboard as the browser does. Run it against a test deployment only. With 4 workers, 300 accounts and 6,749 schools (November 2026, one workstation):
+
+| Simultaneous dashboard loads | p50 | p95 | Errors |
+|---|---|---|---|
+| 1 | 65 ms (national admin 160 ms) | 180 ms | 0 |
+| 10 | 0.57 s | 1.06 s (national admins 1.3 s) | 0 |
+| 50 | 2.6 s | 11 s | 0 |
+
+The national admins' dashboards are the heavy ones, because they load all 6,749 schools.
 
 ## Deploying to Vercel
 
@@ -153,6 +165,22 @@ python -m venv /tmp/lockenv && /tmp/lockenv/bin/pip install ".[parquet]"   # Doc
 
 Changing a user's password revokes every token issued before the change.
 Logins (successful and failed), action changes and user changes are written to the audit log (`GET /auth/audit`, admin only).
+
+### Roles and areas
+
+| Role | Area | Sees | Manages |
+|---|---|---|---|
+| National admin | none (all of France) | everything | everything, every account |
+| Academy or department admin | departments (an académie = its departments) | its schools, sectors, statistics, exports, simulation, audit events | the actions and PPMS of its schools, and the accounts whose reach is inside its area |
+| Referent | its schools | the departments of its schools | the actions and PPMS of its schools |
+| Reader | departments, or none (all of France) | its area | nothing |
+
+The area is set on the admin page ("Périmètre"), or with `departements` in `POST/PATCH /auth/users`.
+- **Visibility:** a school outside the area answers 404, a `departement` filter outside it 403. Lists, statistics, exports, digests and the simulation only cover the area.
+- **Account management:** an area admin cannot create national accounts, give an area larger than their own, or assign schools outside it. Nobody changes their own area.
+- **Last admin:** the last active national admin cannot be demoted, deactivated or given an area.
+- **Audit log:** an area admin sees the events about their schools (each event records its school's department), and those by or about the accounts they manage.
+- **Existing accounts:** at the upgrade (migration 0010), they have no area, so they keep national rights.
 
 ## Refreshing the data
 
@@ -255,7 +283,7 @@ tests/                   # pytest + TestClient, in-memory SQLite
 
 | Method | Path | What it does |
 |---|---|---|
-| GET | `/territoires` | Departments in the data: code, name, académie, number of schools, and how many have an incomplete evaluation |
+| GET | `/territoires` | Departments of the user's area: code, name, académie, number of schools, incomplete evaluations, mean score, high-risk schools, sector sources |
 | GET | `/colleges?…&departement=&limit=&offset=` | Same list filtered by department and paged (total in the `X-Total-Count` header) |
 | GET | `/colleges?commune=&statut=&secteur_id=&niveau=&q=&tri=` | List of schools, highest first: `tri=score` (default) or `tri=priorite` (pupils exposed × risk) |
 | GET | `/colleges/proches?lat=&lon=&rayon_km=5` | Schools within a radius, nearest first (PostGIS) |
@@ -275,7 +303,7 @@ tests/                   # pytest + TestClient, in-memory SQLite
 | GET | `/colleges/{uai}/fiche.pdf` | One-page PDF "fiche risques" of a school |
 | POST | `/auth/me/password` | Change your own password (`current_password`, `new_password`); returns a new token, older ones are revoked |
 | PATCH | `/auth/me` | Own account: `email`, `alertes_email` (weekly digest opt-in; admins and referents) |
-| GET/POST | `/actions` | List actions (filter by `uai`, `alea`, `statut`, `priorite`, `en_retard`) or create one |
+| GET/POST | `/actions` | List the actions of the user's area (filter by `uai`, `alea`, `statut`, `priorite`, `en_retard`; `limit`/`offset`, total in `X-Total-Count`) or create one |
 | GET/PATCH/DELETE | `/actions/{id}` | Read, update or delete one action |
 | GET | `/actions/{id}/historique` | Timeline: creation, changes (old → new), comments; newest first |
 | POST/DELETE | `/actions/{id}/commentaires[/{event_id}]` | Comment (admins, the school's referents); delete (author or admin, audited with the text) |

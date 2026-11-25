@@ -42,6 +42,14 @@ class Settings(BaseSettings):
     # departments, too slow for all of France).
     pipeline_database_url: str | None = None
 
+    # Database connections per process (Postgres): pool + overflow = 20, above the worker
+    # threads (endpoints release their connection early). With N processes (WEB_CONCURRENCY)
+    # Postgres needs N × 20 connections: its default limit is 100.
+    db_pool_size: int = 10
+    db_max_overflow: int = 10
+    # Threads for synchronous endpoints per process (FastAPI's default: 40). See main.py.
+    worker_threads: int = 16
+
     # Authentication and browser access.
     jwt_secret_key: str = ""
     access_token_expire_minutes: int = 30

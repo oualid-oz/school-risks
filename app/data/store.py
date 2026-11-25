@@ -52,7 +52,9 @@ def _read_database() -> tuple[pd.DataFrame, pd.DataFrame, dict[str, Any]]:
     from app.db import engine
     from app.services.reference_db import read_reference
 
-    risques, history, secteurs = read_reference(engine)
+    # ~67,000 school-year rows for all of France, only ever read one school at a time:
+    # read on demand (get_history) instead of held in memory.
+    risques, history, secteurs = read_reference(engine, with_history=False)
     if risques.empty:
         raise RuntimeError(
             "The PostGIS reference tables are empty. Run: python -m app.manage load-reference"
@@ -76,6 +78,9 @@ class DataStore:
 
         self._risk_rows = {r["uai"]: r for r in _records(self.risques)}
         self._profiles = {uai: compute_risk_profile(r) for uai, r in self._risk_rows.items()}
+        # The reference data does not change while the process runs: lists and statistics
+        # are computed once per set of arguments (all of France: ~100 ms each otherwise).
+        self._cache: dict[tuple, Any] = {}
         self._sector_by_id = {
             f["properties"]["secteur_id"]: f for f in self.secteurs["features"]
         }
@@ -90,13 +95,26 @@ class DataStore:
         q: str | None = None,
         tri: str = "score",
         departement: str | None = None,
+        area: frozenset[str] | None = None,
     ) -> list[dict[str, Any]]:
         """Filtered schools, highest first by ``tri``: "score" (risk of the location) or
-        "priorite" (pupils exposed, weighted by risk; schools without an index last)."""
+        "priorite" (pupils exposed, weighted by risk; schools without an index last).
+        ``area``: the departments the user may see (None: all). Read-only rows."""
+        args = (commune, statut, secteur_id, niveau, q, tri, departement, area)
+        if q or commune:  # free text: not cached (the cache would grow without bound)
+            return self._list_colleges(*args)
+        key = ("list", *args)
+        if key not in self._cache:
+            self._cache[key] = self._list_colleges(*args)
+        return list(self._cache[key])
+
+    def _list_colleges(self, commune, statut, secteur_id, niveau, q, tri, departement, area):
         out = []
         for uai, r in self._risk_rows.items():
             p = self._profiles[uai]
             if departement and r.get("departement") != departement:
+                continue
+            if area is not None and r.get("departement") not in area:
                 continue
             if commune and r["commune"].lower() != commune.lower():
                 continue
@@ -126,6 +144,11 @@ class DataStore:
         return {**r, "profil_risque": self._profiles[uai]}
 
     def get_history(self, uai: str) -> list[dict[str, Any]]:
+        if self.history is None:  # database mode: one school's rows
+            from app.db import engine
+            from app.services.reference_db import read_history
+
+            return _records(read_history(engine, uai))
         df = self.history[self.history["uai"] == uai].sort_values("rentree")
         return _records(df)
 
@@ -149,10 +172,16 @@ class DataStore:
         covered = feature["properties"].get("departements")
         return covered is None or departement in covered  # files before Sprint 20: one department
 
-    def secteurs_geojson(self, with_scores: bool = True, departement: str | None = None) -> dict[str, Any]:
+    def secteurs_geojson(
+        self, with_scores: bool = True, departement: str | None = None, area: frozenset[str] | None = None
+    ) -> dict[str, Any]:
         """Sectors (of one department: those covering part of it), with the scores of the
         schools they serve. All of France is ~12 MB: the map asks for one department."""
-        selected = [f for f in self.secteurs["features"] if self._in_department(f, departement)]
+        selected = [
+            f for f in self.secteurs["features"]
+            if self._in_department(f, departement)
+            and (area is None or any(self._in_department(f, d) for d in area))
+        ]
         if not with_scores:
             return {"type": "FeatureCollection", "features": selected}
         # Attach the score of the school(s) that serve each sector.
@@ -183,13 +212,15 @@ class DataStore:
         return self._sector_by_id.get(secteur_id)
 
     # ---- stats ----------------------------------------------------------
-    def territories(self) -> list[dict[str, Any]]:
+    def territories(self, area: frozenset[str] | None = None) -> list[dict[str, Any]]:
         """Departments present in the data: académie, schools, incomplete evaluations, mean
         score and high-risk schools (the national map's colours), and where the sectors
         come from (each department shows the origin of its outlines)."""
         out: dict[str, dict[str, Any]] = {}
         for r in self._risk_rows.values():
             code = r.get("departement")
+            if area is not None and code not in area:
+                continue
             profile = self._profiles[r["uai"]]
             entry = out.setdefault(code, {
                 "code": code, "nom": r.get("departement_nom"), "academie": r.get("academie"),
@@ -212,8 +243,18 @@ class DataStore:
             entry["score_moyen"] = round(entry["score_moyen"] / entry["colleges"], 1)
         return sorted(out.values(), key=lambda t: t["code"] or "")
 
-    def stats(self, departement: str | None = None) -> dict[str, Any]:
-        rows = [r for r in self._risk_rows.values() if not departement or r.get("departement") == departement]
+    def stats(self, departement: str | None = None, area: frozenset[str] | None = None) -> dict[str, Any]:
+        key = ("stats", departement, area)
+        if key not in self._cache:
+            self._cache[key] = self._stats(departement, area)
+        return dict(self._cache[key])
+
+    def _stats(self, departement: str | None, area: frozenset[str] | None) -> dict[str, Any]:
+        rows = [
+            r for r in self._risk_rows.values()
+            if (not departement or r.get("departement") == departement)
+            and (area is None or r.get("departement") in area)
+        ]
         profiles = [self._profiles[r["uai"]] for r in rows]
         niveaux: dict[str, int] = {}
         eleves: dict[str, int] = {}

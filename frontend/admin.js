@@ -1,4 +1,5 @@
-// Admin page: users, roles, school assignments, email alerts, deactivation.
+// Admin page: users, roles, areas (national, académie, department), school assignments,
+// email alerts, deactivation.
 // The API enforces the rules (admins only, cannot demote or disable yourself or the last
 // admin); this page shows its error messages as they come.
 
@@ -36,7 +37,7 @@ function renderUsers(users) {
   const table = element("table");
   const head = element("thead");
   const headRow = element("tr");
-  ["Identifiant", "Rôle", "Collèges", "E-mail", "Alertes", "Statut", ""].forEach((title) => {
+  ["Identifiant", "Rôle", "Périmètre", "E-mail", "Alertes", "Statut", ""].forEach((title) => {
     const th = element("th", "", title);
     th.scope = "col";
     headRow.append(th);
@@ -47,10 +48,11 @@ function renderUsers(users) {
     const row = element("tr", user.active ? "" : "inactive");
     const schoolsCell = element("td");
     if (user.role === "referent") {
-      schoolsCell.textContent = user.school_uais.length ? `${user.school_uais.length}` : "aucun";
+      const n = user.school_uais.length;
+      schoolsCell.textContent = n ? `${n} collège${n > 1 ? "s" : ""}` : "aucun collège";
       schoolsCell.title = user.school_uais.map(schoolName).join(", ");
     } else {
-      schoolsCell.textContent = "tous";
+      schoolsCell.textContent = areaLabel(user.departements);
     }
     const edit = element("button", "", "Modifier");
     edit.type = "button";
@@ -71,6 +73,42 @@ function renderUsers(users) {
   });
   table.append(head, body);
   document.getElementById("user-table").replaceChildren(table);
+}
+
+// Areas an admin can give: France (national admins only), each académie, each department
+// (only those the admin sees: `territories` is already limited to their area).
+function areaChoices() {
+  const choices = [];
+  if (!currentUser.departements?.length) choices.push(["", "France entière"]);
+  const academies = new Map();
+  territories.forEach((t) => {
+    if (!t.academie) return;
+    academies.set(t.academie, [...(academies.get(t.academie) || []), t.code]);
+  });
+  [...academies].sort((a, b) => a[0].localeCompare(b[0], "fr")).forEach(([name, codes]) => {
+    if (codes.length > 1) choices.push([codes.join(","), `Académie ${name} (${codes.join(", ")})`]);
+  });
+  territories.forEach((t) => choices.push([t.code, `${t.nom || "Département"} (${t.code})`]));
+  return choices;
+}
+
+function areaLabel(codes) {
+  if (!codes?.length) return "France entière";
+  const match = areaChoices().find(([value]) => value === codes.join(","));
+  return match ? match[1] : codes.join(", ");
+}
+
+function renderAreaOptions(codes) {
+  const select = document.getElementById("user-form").elements.perimetre;
+  const value = (codes || []).join(",");
+  const choices = areaChoices();
+  if (value && !choices.some(([v]) => v === value)) choices.push([value, `Personnalisé (${codes.join(", ")})`]);
+  select.replaceChildren(...choices.map(([v, text]) => {
+    const option = element("option", "", text);
+    option.value = v;
+    return option;
+  }));
+  select.value = choices.some(([v]) => v === value) ? value : choices[0]?.[0] ?? "";
 }
 
 function renderSchoolOptions(selected) {
@@ -109,6 +147,7 @@ function syncRoleFields() {
   const form = document.getElementById("user-form");
   const role = form.elements.role.value;
   form.querySelector("[data-referent-only]").hidden = role !== "referent";
+  form.querySelector("[data-area-only]").hidden = role === "referent"; // referents: their schools
   // Readers get no digest (the API refuses it).
   form.elements.alertes_email.disabled = role === "lecteur";
   if (role === "lecteur") form.elements.alertes_email.checked = false;
@@ -134,6 +173,7 @@ function openUserDialog(user) {
   form.querySelector("[data-edit-only]").hidden = creating;
   form.querySelector("[data-school-filter]").value = "";
   renderSchoolOptions(user?.school_uais || []);
+  renderAreaOptions(user?.departements || currentUser.departements || []);
   syncRoleFields();
   document.getElementById("user-dialog").showModal();
 }
@@ -145,6 +185,7 @@ async function saveUser(event) {
   const body = {
     role,
     school_uais: role === "referent" ? selectedSchools() : [],
+    departements: role === "referent" ? [] : form.elements.perimetre.value.split(",").filter(Boolean),
     email: form.elements.email.value.trim() || null,
     alertes_email: form.elements.alertes_email.checked,
   };

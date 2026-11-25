@@ -1,11 +1,12 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from fastapi.security import OAuth2PasswordRequestForm
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 from sqlalchemy.exc import IntegrityError
-from sqlmodel import Session, select
+from sqlmodel import Session, or_, select
 
-from app.core.config import settings
+from app.core.config import parse_departements, settings
+from app.core.scope import Scope, can_administer, get_scope, user_area, user_reach
 from app.core.security import (
     _DUMMY_PASSWORD_HASH,
     assigned_schools,
@@ -27,6 +28,7 @@ from app.models.security import (
     User,
     UserCollegeLink,
     UserCreate,
+    UserDepartementLink,
     UserRead,
     UserRole,
     UserUpdate,
@@ -50,6 +52,7 @@ def _user_read(session: Session, user: User) -> UserRead:
         role=user.role,
         active=user.active,
         school_uais=sorted(assigned_schools(session, user)),
+        departements=sorted(user_area(session, user)),
         email=user.email,
         alertes_email=user.alertes_email,
         created_at=user.created_at,
@@ -80,6 +83,53 @@ def _validate_school_assignments(
         raise HTTPException(status_code=422, detail=f"UAI de collège inconnu(s) : {', '.join(unknown)}")
 
 
+def _validate_area(store: DataStore, role: UserRole, departements: list[str]) -> list[str]:
+    """Department codes of an admin's or reader's area (empty: all of France)."""
+    codes = sorted(set(parse_departements(departements)))
+    if role == UserRole.referent and codes:
+        raise HTTPException(
+            status_code=422,
+            detail="Un référent n’a pas de périmètre : son périmètre est celui de ses collèges",
+        )
+    known = {t["code"] for t in store.territories()}
+    unknown = [c for c in codes if c not in known]
+    if unknown:
+        raise HTTPException(
+            status_code=422, detail=f"Département(s) sans collège suivi : {', '.join(unknown)}"
+        )
+    return codes
+
+
+def _set_area(session: Session, user: User, codes: list[str]) -> None:
+    for link in session.exec(select(UserDepartementLink).where(UserDepartementLink.user_id == user.id)).all():
+        session.delete(link)
+    for code in codes:
+        session.add(UserDepartementLink(user_id=user.id, departement=code))
+
+
+def _reach_of(
+    store: DataStore, role: UserRole, school_uais: list[str], area: list[str]
+) -> frozenset[str] | None:
+    """The departments a user with these settings would reach (None: all of France)."""
+    if role == UserRole.referent:
+        colleges = (store.get_college(u) for u in school_uais)
+        return frozenset(c["departement"] for c in colleges if c and c.get("departement"))
+    return frozenset(area) if area else None
+
+
+def _require_administrable(scope: Scope, reach: frozenset[str] | None) -> None:
+    if not can_administer(scope, reach):
+        raise HTTPException(
+            status_code=403,
+            detail="Hors de votre périmètre : seul un administrateur national peut gérer ce compte",
+        )
+
+
+def _national_admins(session: Session) -> list[User]:
+    admins = session.exec(select(User).where(User.role == UserRole.admin, User.active.is_(True))).all()
+    return [a for a in admins if not user_area(session, a)]
+
+
 @router.post("/token", response_model=TokenRead)
 @limiter.limit(settings.rate_limit_login)
 def issue_token(
@@ -89,6 +139,7 @@ def issue_token(
 ):
     user = session.exec(select(User).where(User.username == form_data.username)).first()
     stored_hash = user.hashed_password if user else _DUMMY_PASSWORD_HASH
+    session.close()  # the password check is slow on purpose: not while holding a connection
     valid_password = password_hash.verify(form_data.password, stored_hash)
     if user is None or not user.active or not valid_password:
         record_audit(
@@ -122,7 +173,9 @@ def read_current_user(
     user: User = Depends(get_current_user),
     session: Session = Depends(get_session),
 ):
-    return _user_read(session, user)
+    account = _user_read(session, user)
+    session.close()  # free the connection before the response is serialised and sent
+    return account
 
 
 @router.post("/me/password", response_model=TokenRead)
@@ -183,11 +236,23 @@ def update_current_user(
 @limiter.limit(settings.rate_limit_default)
 def list_users(
     request: Request,
+    limit: int | None = Query(None, ge=1, le=1000, description="Page size (default: everything)"),
+    offset: int = Query(0, ge=0),
+    response: Response = None,
     session: Session = Depends(get_session),
+    store: DataStore = Depends(get_store),
     _admin: User = Depends(require_roles(UserRole.admin)),
+    scope: Scope = Depends(get_scope),
 ):
-    users = session.exec(select(User).order_by(User.username)).all()
-    return [_user_read(session, user) for user in users]
+    """The accounts this admin manages (area admins: those inside their area, and themselves).
+    The total before paging is in the `X-Total-Count` header."""
+    users = [
+        u for u in session.exec(select(User).order_by(User.username)).all()
+        if u.id == scope.user.id or can_administer(scope, user_reach(session, store, u))
+    ]
+    response.headers["X-Total-Count"] = str(len(users))
+    page = users[offset:offset + limit] if limit else users[offset:]
+    return [_user_read(session, user) for user in page]
 
 
 @router.post("/users", response_model=UserRead, status_code=201)
@@ -198,10 +263,13 @@ def create_user(
     session: Session = Depends(get_session),
     store: DataStore = Depends(get_store),
     admin: User = Depends(require_roles(UserRole.admin)),
+    scope: Scope = Depends(get_scope),
 ):
     if session.exec(select(User).where(User.username == payload.username)).first():
         raise HTTPException(status_code=409, detail="Cet identifiant existe déjà")
     _validate_school_assignments(store, payload.role, payload.school_uais)
+    area = _validate_area(store, payload.role, payload.departements)
+    _require_administrable(scope, _reach_of(store, payload.role, payload.school_uais, area))
     user = User(
         username=payload.username,
         hashed_password=hash_password(payload.password),
@@ -218,6 +286,7 @@ def create_user(
         raise HTTPException(status_code=409, detail="Cet identifiant existe déjà") from None
     for uai in sorted(set(payload.school_uais)):
         session.add(UserCollegeLink(user_id=user.id, uai=uai))
+    _set_area(session, user, area)
     record_audit(
         session,
         request,
@@ -225,7 +294,7 @@ def create_user(
         "user.created",
         "user",
         user.id,
-        {"role": user.role.value, "school_uais": sorted(set(payload.school_uais))},
+        {"role": user.role.value, "school_uais": sorted(set(payload.school_uais)), "departements": area},
     )
     session.commit()
     session.refresh(user)
@@ -241,10 +310,13 @@ def update_user(
     session: Session = Depends(get_session),
     store: DataStore = Depends(get_store),
     admin: User = Depends(require_roles(UserRole.admin)),
+    scope: Scope = Depends(get_scope),
 ):
     user = session.get(User, user_id)
     if user is None:
         raise HTTPException(status_code=404, detail="Utilisateur introuvable")
+    if user.id != admin.id:
+        _require_administrable(scope, user_reach(session, store, user))
 
     changes = payload.model_dump(exclude_unset=True)
     new_role = changes.get("role", user.role)
@@ -254,17 +326,26 @@ def update_user(
             status_code=422,
             detail="Vous ne pouvez pas désactiver votre propre compte ni retirer votre rôle d’administrateur",
         )
-    if user.role == UserRole.admin and user.active and (
-        new_role != UserRole.admin or not new_active
-    ):
-        admins = session.exec(
-            select(User).where(User.role == UserRole.admin, User.active.is_(True))
-        ).all()
-        if len(admins) <= 1:
-            raise HTTPException(
-                status_code=422,
-                detail="Impossible de désactiver ou de rétrograder le dernier administrateur actif",
-            )
+    current_area = sorted(user_area(session, user))
+    new_area = current_area
+    if "departements" in changes or new_role == UserRole.referent:
+        new_area = _validate_area(store, new_role, changes.get("departements") or [])
+    if user.id == admin.id and new_area != current_area:
+        raise HTTPException(status_code=422, detail="Vous ne pouvez pas modifier votre propre périmètre")
+    if "school_uais" in changes:
+        new_schools = changes["school_uais"] or []
+    else:
+        new_schools = sorted(assigned_schools(session, user))
+    if user.id != admin.id:
+        _require_administrable(scope, _reach_of(store, new_role, new_schools, new_area))
+    was_national_admin = user.role == UserRole.admin and user.active and not current_area
+    stays_national_admin = new_role == UserRole.admin and new_active and not new_area
+    if was_national_admin and not stays_national_admin and len(_national_admins(session)) <= 1:
+        raise HTTPException(
+            status_code=422,
+            detail="Impossible de désactiver, de rétrograder ou de limiter "
+            "le dernier administrateur national actif",
+        )
 
     if "school_uais" in changes:
         school_uais = changes["school_uais"] or []
@@ -280,6 +361,8 @@ def update_user(
             select(UserCollegeLink).where(UserCollegeLink.user_id == user.id)
         ).all():
             session.delete(link)
+    if new_area != current_area:
+        _set_area(session, user, new_area)
     if "password" in changes and changes["password"]:
         user.hashed_password = hash_password(changes["password"])
     if "role" in changes:
@@ -313,7 +396,23 @@ def update_user(
 def list_audit_log(
     request: Request,
     limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
     session: Session = Depends(get_session),
+    store: DataStore = Depends(get_store),
     _admin: User = Depends(require_roles(UserRole.admin)),
+    scope: Scope = Depends(get_scope),
 ):
-    return session.exec(select(AuditLog).order_by(AuditLog.id.desc()).limit(limit)).all()
+    """Newest first. Area admins see the events about their area's schools, and those by or
+    about the accounts they manage."""
+    stmt = select(AuditLog)
+    if not scope.national:
+        managed = [
+            u.id for u in session.exec(select(User)).all()
+            if u.id == scope.user.id or can_administer(scope, user_reach(session, store, u))
+        ]
+        stmt = stmt.where(or_(
+            AuditLog.departement.in_(scope.departements),
+            AuditLog.actor_user_id.in_(managed),
+            (AuditLog.resource_type == "user") & AuditLog.resource_id.in_([str(i) for i in managed]),
+        ))
+    return session.exec(stmt.order_by(AuditLog.id.desc()).offset(offset).limit(limit)).all()

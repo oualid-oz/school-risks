@@ -2,6 +2,7 @@ import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+import anyio.to_thread
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
@@ -37,6 +38,10 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     validate_security_settings()
+    # Fewer worker threads than FastAPI's default 40: CPU-bound endpoints share one GIL, and
+    # with 40 of them the event loop (which sends responses and returns connections to the
+    # pool) is starved under load. Scale with processes instead (WEB_CONCURRENCY).
+    anyio.to_thread.current_default_thread_limiter().total_tokens = settings.worker_threads
     if settings.rate_limit_storage_uri.startswith("memory://"):
         logger.warning(
             "Rate limits are kept in memory: they reset on restart and are not "
@@ -71,7 +76,8 @@ app.add_middleware(
 
 app.add_middleware(RequestLogMiddleware)
 # All of France is ~3 MB of school summaries and ~12 MB of sectors: compress JSON and GeoJSON.
-app.add_middleware(GZipMiddleware, minimum_size=1024)
+# Level 5: ~8× faster than the default 9 on 2 MB of JSON, for 1 % more bytes.
+app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=5)
 
 if settings.trusted_proxies:
     # Added last so it runs first: rate limiting, request logs and the audit log

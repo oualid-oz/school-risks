@@ -1,4 +1,4 @@
-from collections.abc import Iterator
+from collections.abc import AsyncIterator
 from pathlib import Path
 
 from sqlalchemy import inspect, text
@@ -18,8 +18,11 @@ def make_engine(url: str):
         return create_engine(url, connect_args={"check_same_thread": False})
     # prepare_threshold=None: no server-side prepared statements, so the URL may point to a
     # transaction-mode connection pooler (PgBouncer, Neon's "-pooler" host).
+    # Sized above the worker threads (settings.worker_threads): requests do not queue for a
+    # connection under load (SQLAlchemy's default is 5 + 10).
     return create_engine(
-        url, pool_pre_ping=True, pool_recycle=300, connect_args={"prepare_threshold": None}
+        url, pool_pre_ping=True, pool_recycle=300, connect_args={"prepare_threshold": None},
+        pool_size=settings.db_pool_size, max_overflow=settings.db_max_overflow, pool_timeout=30,
     )
 
 
@@ -106,6 +109,11 @@ def _add_missing_sqlite_columns() -> None:
                 conn.execute(text(f'ALTER TABLE "{table.name}" ADD COLUMN "{column.name}" {ddl}'))
 
 
-def get_session() -> Iterator[Session]:
+async def get_session() -> AsyncIterator[Session]:
+    """One session per request. Async on purpose: its cleanup (which returns the connection
+    to the pool) then runs on the event loop. As a sync dependency, the cleanup needs a
+    worker thread, and under load every thread can be an endpoint waiting for a connection
+    that only those cleanups would free: requests stall until the pool timeout. The session
+    itself is still used from the endpoints' threads (one at a time)."""
     with Session(engine) as session:
         yield session

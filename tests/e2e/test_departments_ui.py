@@ -92,3 +92,28 @@ def test_national_view_opens_a_department_with_its_sectors(pilot_page):
 
     page.locator("#territory-select").select_option("")
     page.wait_for_function("map.hasLayer(departmentLayer) && sectorLayer.getLayers().length === 0")
+
+
+def test_department_admin_sees_and_administers_their_department_only(pilot_page):
+    page = pilot_page
+    password = "admin-74-password-" + "x" * 8
+    status = page.evaluate("""async (password) => {
+        const response = await fetch('/api/v1/auth/users', {method: 'POST',
+            headers: {'Content-Type': 'application/json', Authorization: `Bearer ${accessToken}`},
+            body: JSON.stringify({username: 'e2e-admin-74', password, role: 'admin', departements: ['74']})});
+        return response.status; }""", password)
+    assert status == 201
+
+    login(page, "e2e-admin-74", password)
+    expect(page.locator("#map-count")).to_have_text("75 collèges")
+    expect(page.locator("#territory-field")).to_be_hidden()  # one department: nothing to choose
+    expect(page.locator("#territory-heading")).to_contain_text("Haute-Savoie (74)")
+    assert page.evaluate("schools.every((s) => s.departement === '74')")
+
+    page.goto("/#admin")
+    expect(page.locator("#user-table tbody tr")).to_have_count(1)  # only themselves
+    expect(page.locator("#user-table")).to_contain_text("Haute-Savoie (74)")
+    page.get_by_role("button", name="Nouvel utilisateur").click()
+    options = page.locator("#user-form select[name=perimetre] option")
+    expect(options).to_have_count(1)  # no "France entière", no other department
+    expect(options.first).to_have_text("Haute-Savoie (74)")

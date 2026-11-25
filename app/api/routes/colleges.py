@@ -1,10 +1,11 @@
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
+from fastapi import APIRouter, Depends, Query, Request, Response
 from sqlmodel import Session
 
 from app.api.routes.auth import limiter
 from app.core.config import settings
+from app.core.scope import Scope, get_scope
 from app.core.security import get_current_user
 from app.data.store import DataStore, get_store
 from app.db import get_session
@@ -49,11 +50,14 @@ def list_colleges(
     response: Response = None,
     store: DataStore = Depends(get_store),
     session: Session = Depends(get_session),
+    scope: Scope = Depends(get_scope),
 ):
-    """Schools, highest first by `tri`, with the status of their PPMS.
+    """Schools of the user's area, highest first by `tri`, with the status of their PPMS.
     The total before paging is in the `X-Total-Count` header."""
-    rows = store.list_colleges(commune, statut, secteur_id, niveau, q, tri, departement)
+    scope.check_departement(departement)
+    rows = store.list_colleges(commune, statut, secteur_id, niveau, q, tri, departement, scope.departements)
     status = ppms_statuses(session, [r["uai"] for r in rows])
+    session.close()  # done with the database: free the connection before serialising
     rows = [{**r, "ppms_statut": status[r["uai"]].statut} for r in rows]
     rows = [r for r in rows if ppms is None or r["ppms_statut"] == ppms]
     response.headers["X-Total-Count"] = str(len(rows))
@@ -70,10 +74,11 @@ def nearby_colleges(
     limit: int = Query(20, ge=1, le=100),
     store: DataStore = Depends(get_store),
     session: Session = Depends(get_session),
+    scope: Scope = Depends(get_scope),
 ):
     """Schools within `rayon_km` of a point, nearest first (PostGIS `ST_DWithin`)."""
     require_postgis()
-    summaries = {s["uai"]: s for s in store.list_colleges()}
+    summaries = {s["uai"]: s for s in store.list_colleges(area=scope.departements)}
     return [
         {**summaries[uai], "distance_km": km}
         for uai, km in colleges_near(session, lat, lon, rayon_km, limit)
@@ -88,10 +93,10 @@ def get_college(
     uai: str,
     store: DataStore = Depends(get_store),
     session: Session = Depends(get_session),
+    scope: Scope = Depends(get_scope),
 ):
+    scope.require_visible(store, uai)
     college = store.get_college(uai)
-    if college is None:
-        raise HTTPException(404, f"Collège {uai} introuvable")
     return {**college, "profil_risque": _with_ppms_alerts(college["profil_risque"], session, uai)}
 
 
@@ -102,24 +107,27 @@ def get_risk_profile(
     uai: str,
     store: DataStore = Depends(get_store),
     session: Session = Depends(get_session),
+    scope: Scope = Depends(get_scope),
 ):
+    scope.require_visible(store, uai)
     profile = store.get_profile(uai)
-    if profile is None:
-        raise HTTPException(404, f"Collège {uai} introuvable")
     return _with_ppms_alerts(profile, session, uai)
 
 
 def _with_ppms_alerts(profile: dict, session: Session, uai: str) -> dict:
     """The stored profile plus PPMS alerts (a copy: the cached profile is shared)."""
-    return {**profile, "alertes": [*profile["alertes"], *ppms_status_for(session, uai).raisons]}
+    reasons = ppms_status_for(session, uai).raisons
+    session.close()  # done with the database: free the connection before serialising
+    return {**profile, "alertes": [*profile["alertes"], *reasons]}
 
 
 @router.get("/{uai}/historique", response_model=list[YearRecord])
 @limiter.limit(settings.rate_limit_default)
-def get_history(request: Request, uai: str, store: DataStore = Depends(get_store)):
+def get_history(
+    request: Request, uai: str, store: DataStore = Depends(get_store), scope: Scope = Depends(get_scope)
+):
     """Yearly enrolment, IPS and DNB results (2016 → 2025)."""
-    if not store.exists(uai):
-        raise HTTPException(404, f"Collège {uai} introuvable")
+    scope.require_visible(store, uai)
     return store.get_history(uai)
 
 
@@ -130,8 +138,8 @@ def get_score_history(
     uai: str,
     store: DataStore = Depends(get_store),
     session: Session = Depends(get_session),
+    scope: Scope = Depends(get_scope),
 ):
     """Risk scores stored by the yearly snapshots, oldest first."""
-    if not store.exists(uai):
-        raise HTTPException(404, f"Collège {uai} introuvable")
+    scope.require_visible(store, uai)
     return history_for(session, uai)
