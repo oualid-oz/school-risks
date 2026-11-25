@@ -6,7 +6,14 @@ const HAZARD_LABELS = {
   industriel: "Industriel",
   tmd: "Transport dangereux",
   nucleaire: "Nucléaire",
+  seisme: "Séisme",
+  radon: "Radon",
+  feu_foret: "Feu de forêt",
+  littoral: "Littoral",
+  avalanche: "Avalanche",
 };
+const SEISMIC_ZONES = { 1: "très faible", 2: "faible", 3: "modérée", 4: "moyenne", 5: "forte" };
+const RADON_CLASSES = { 1: "faible", 2: "faible avec facteurs aggravants", 3: "significatif" };
 const STATUS_LABELS = { a_faire: "À faire", en_cours: "En cours", termine: "Terminée", annule: "Annulée" };
 const PRIORITY_LABELS = { basse: "Priorité basse", normale: "Priorité normale", haute: "Priorité haute", critique: "Priorité critique" };
 const nf = new Intl.NumberFormat("fr-FR");
@@ -534,6 +541,29 @@ function addChart(canvas, config) {
   currentCharts.push(chart);
 }
 
+// Why each hazard of part of the territory counts for this school (sources: Géorisques, GASPAR).
+function territorialReasons(school, profile) {
+  const plan = (yes, text) => (yes ? [text] : []);
+  const decrees = (n, what) => (n ? [`${n} arrêté(s) CatNat ${what}`] : []);
+  const reasons = {
+    seisme: () => [`zone de sismicité ${school.zone_sismique} (${SEISMIC_ZONES[school.zone_sismique] || "?"})`],
+    radon: () => [`potentiel radon de catégorie ${school.classe_radon} (${RADON_CLASSES[school.classe_radon] || "?"})`],
+    feu_foret: () => [school.ppr_feu_foret ? "plan de prévention des incendies de forêt (PPRIF)" : "commune exposée selon le DDRM"],
+    littoral: () => [
+      ...plan(school.ppr_submersion_marine, "plan de prévention submersion marine"),
+      ...plan(school.ppr_recul_trait_cote, "plan de prévention recul du trait de côte"),
+      ...decrees(school.nb_catnat_littoral, "vagues ou raz de marée"),
+    ],
+    avalanche: () => [
+      school.ppr_avalanche ? "plan de prévention avalanche" : "commune exposée selon le DDRM",
+      ...decrees(school.nb_catnat_avalanche, "avalanche"),
+    ],
+  };
+  return Object.keys(reasons)
+    .filter((hazard) => hazard in profile.aleas)
+    .map((hazard) => `${HAZARD_LABELS[hazard]} : ${reasons[hazard]().join(", ")} (score ${profile.aleas[hazard]}/100)`);
+}
+
 function renderRiskChart(canvas, profile) {
   addChart(canvas, {
     type: "radar",
@@ -638,6 +668,15 @@ function renderSchool(school, actions, history, ppms) {
   radar.setAttribute("aria-label", "Graphique radar des scores par aléa");
   radarWrap.append(radar);
   riskPanel.append(radarWrap);
+  const territorial = territorialReasons(school, profile);
+  if (territorial.length) {
+    const box = element("div", "territory-box");
+    box.append(element("strong", "", "Aléas propres au territoire"));
+    const list = element("ul");
+    territorial.forEach((reason) => list.append(element("li", "", reason)));
+    box.append(list);
+    riskPanel.append(box);
+  }
   if (profile.alertes?.length) {
     const list = element("ul", "alert-list");
     profile.alertes.forEach((alert) => list.append(element("li", "", alert)));

@@ -17,7 +17,6 @@ from app.core.config import settings
 from app.models.ppms import PpmsStatus
 from app.services.exports import (
     ALEA_LABELS,
-    HAZARDS,
     NIVEAU_LABELS,
     PPMS_LABELS,
     PRIORITE_LABELS,
@@ -25,6 +24,34 @@ from app.services.exports import (
     label,
 )
 from app.services.scoring import niveau
+
+SEISMIC_ZONES = {1: "très faible", 2: "faible", 3: "modérée", 4: "moyenne", 5: "forte"}
+
+
+def territorial_rows(c: dict, aleas: dict[str, float]) -> list[tuple[str, str]]:
+    """The data behind each territorial hazard shown on the sheet (only where present)."""
+    def yes(flag: object) -> str:
+        return "Oui" if flag else "Non"
+
+    rows = []
+    if "seisme" in aleas:
+        zone = c.get("zone_sismique")
+        rows.append(("Zone de sismicité", f"{zone} ({SEISMIC_ZONES.get(zone, '?')})"))
+    if "radon" in aleas:
+        rows.append(("Potentiel radon (catégorie 1 à 3)", str(c.get("classe_radon"))))
+    if "feu_foret" in aleas:
+        rows.append(("Feu de forêt : PPRIF / DDRM",
+                     f"{yes(c.get('ppr_feu_foret'))} / {yes(c.get('ddrm_feu_foret'))}"))
+    if "littoral" in aleas:
+        rows.append(("PPR submersion marine / recul du trait de côte",
+                     f"{yes(c.get('ppr_submersion_marine'))} / {yes(c.get('ppr_recul_trait_cote'))}"))
+        rows.append(("Arrêtés CatNat vagues et raz de marée", str(c.get("nb_catnat_littoral") or 0)))
+    if "avalanche" in aleas:
+        rows.append(("Avalanche : PPR / DDRM",
+                     f"{yes(c.get('ppr_avalanche'))} / {yes(c.get('ddrm_avalanche'))}"))
+        rows.append(("Arrêtés CatNat avalanche", str(c.get("nb_catnat_avalanche") or 0)))
+    return rows
+
 
 FONTS = Path(__file__).resolve().parents[1] / "assets" / "fonts"
 GREEN, INK, MUTED, LINE = (24, 118, 83), (23, 35, 30), (110, 120, 114), (226, 231, 226)
@@ -194,8 +221,8 @@ def build_fiche(data: FicheData) -> bytes:
     pdf.set_y(max(pdf.get_y(), y + 22))
 
     pdf.section("Score par aléa (0–100)")
-    for hazard in HAZARDS:
-        pdf.bar(ALEA_LABELS[hazard], profile["aleas"][hazard])
+    for hazard, value in profile["aleas"].items():  # territorial hazards only where present
+        pdf.bar(ALEA_LABELS[hazard], value)
 
     pdf.section("Données de référence")
     pdf.key_values([
@@ -214,6 +241,7 @@ def build_fiche(data: FicheData) -> bytes:
          f"{c['nb_catnat_mouvement_terrain']})"),
         ("DICRIM de la commune", str(c["annee_dicrim"]) if c["annee_dicrim"] else "Absent"),  # a year
         ("Repère de crue le plus proche", number(c["distance_repere_crue_km"], " km")),
+        *territorial_rows(c, profile["aleas"]),
     ])
 
     pdf.section("Alertes")

@@ -102,12 +102,21 @@ class Settings(BaseSettings):
     weight_industriel: float = 1.2
     weight_tmd: float = 1.0
     weight_nucleaire: float = 1.2
+    # Hazards of part of the territory: they only count where present (see scoring.py).
+    weight_seisme: float = 1.2
+    weight_radon: float = 0.5
+    weight_feu_foret: float = 1.0
+    weight_littoral: float = 1.2
+    weight_avalanche: float = 1.0
 
     # Level thresholds on the global score: faible < moyen <= ... < eleve <= 100.
     seuil_moyen: float = 30.0
     seuil_eleve: float = 50.0
     # Points of each clay exposure class (Géorisques map), before the drought CatNat bonus.
     argiles_points: dict[str, float] = {"faible": 15.0, "moyen": 45.0, "fort": 85.0, "non cartographié": 0.0}
+    # Points of each earthquake zone (1 very low … 5 strong) and radon class (1 low … 3 significant).
+    seisme_points: dict[str, float] = {"1": 0.0, "2": 25.0, "3": 50.0, "4": 75.0, "5": 100.0}
+    radon_points: dict[str, float] = {"1": 0.0, "2": 20.0, "3": 60.0}
 
     @model_validator(mode="after")
     def _check_scoring(self) -> "Settings":

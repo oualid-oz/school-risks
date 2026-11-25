@@ -14,6 +14,11 @@ class Alea(str, Enum):
     industriel = "industriel"
     tmd = "tmd"
     nucleaire = "nucleaire"
+    seisme = "seisme"
+    radon = "radon"
+    feu_foret = "feu_foret"
+    littoral = "littoral"
+    avalanche = "avalanche"
     general = "general"
 
 

@@ -93,6 +93,8 @@ main:focus, h1:focus { outline: 0; }
 .territory-gaps { margin: 8px 0 0; padding: 7px 10px; border-radius: 7px; background: #fff8eb; color: #7a4f17; font-size: 11px; max-width: 640px; }
 .gaps-box { margin-top: 10px; padding: 10px 12px; border-radius: 7px; background: #fff8eb; color: #7a4f17; font-size: 11px; }
 .gaps-box ul { margin: 6px 0 0; padding-left: 18px; }
+.territory-box { margin-top: 10px; padding: 10px 12px; border-radius: 7px; background: #eef4fb; color: #24486b; font-size: 11px; }
+.territory-box ul { margin: 6px 0 0; padding-left: 18px; }
 /* Simulation */
 .simulation-grid { display: grid; grid-template-columns: minmax(260px, 330px) minmax(0, 1fr); gap: 16px; align-items: start; }
 .simulation-form { padding: 16px 18px; display: grid; gap: 14px; position: sticky; top: 16px; }

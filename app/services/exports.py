@@ -13,6 +13,8 @@ from collections.abc import Iterable
 from datetime import date, datetime
 from typing import Any
 
+from app.services.scoring import HAZARD_NAMES
+
 FORMULA_START = ("=", "+", "-", "@", "\t", "\r")
 
 ALEA_LABELS = {
@@ -22,6 +24,11 @@ ALEA_LABELS = {
     "industriel": "Industriel",
     "tmd": "Transport de matières dangereuses",
     "nucleaire": "Nucléaire",
+    "seisme": "Séisme",
+    "radon": "Radon",
+    "feu_foret": "Feu de forêt",
+    "littoral": "Submersion marine et recul du littoral",
+    "avalanche": "Avalanche",
     "general": "Général",
 }
 NIVEAU_LABELS = {"faible": "Faible", "moyen": "Modéré", "eleve": "Élevé"}
@@ -63,7 +70,7 @@ def to_csv(header: list[str], rows: Iterable[list[Any]]) -> bytes:
     return ("﻿" + buffer.getvalue()).encode("utf-8")
 
 
-HAZARDS = ["inondation", "argiles", "mouvements_terrain", "industriel", "tmd", "nucleaire"]
+HAZARDS = list(HAZARD_NAMES)  # a territorial hazard absent at a school scores 0
 
 
 def colleges_csv(rows: list[dict[str, Any]]) -> bytes:
@@ -80,7 +87,7 @@ def colleges_csv(rows: list[dict[str, Any]]) -> bytes:
             r["effectif_total"], r["ips"],
             r["score_global"], label(NIVEAU_LABELS, r["niveau"]), label(ALEA_LABELS, r["alea_principal"]),
             r["indice_priorite"],
-            *[r["profil"]["aleas"][h] for h in HAZARDS],
+            *[r["profil"]["aleas"].get(h, 0.0) for h in HAZARDS],
             label(PPMS_LABELS, r["ppms"].statut), r["ppms"].derniere_mise_a_jour,
             " | ".join(r["alertes"]),
             " | ".join(r["profil"].get("lacunes", [])),

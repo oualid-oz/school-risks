@@ -95,7 +95,7 @@ def test_global_score_is_the_weighted_mean_and_flags_dicrim(monkeypatch):
     row = {"dans_ppri": True, "argiles_classe": "fort", "distance_tmd_m": 5000,
            "annee_dicrim": date.today().year - 2, "effectif_total": 400}
     profile = s.compute_risk_profile(row)
-    weights = {h: getattr(settings, w) for h, (_, w) in s.HAZARDS.items()}
+    weights = {h: getattr(settings, w) for h, (_, w) in s.HAZARDS.items() if h in s.CORE_HAZARDS}
     expected = sum(profile["aleas"][h] * weights[h] for h in weights) / sum(weights.values())
     assert profile["score_global"] == APPROX(expected, abs=0.05)
     assert profile["alea_principal"] == "argiles" and profile["alertes"] == []
