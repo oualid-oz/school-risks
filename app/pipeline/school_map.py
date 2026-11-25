@@ -110,8 +110,8 @@ parts AS (
     SELECT * FROM whole UNION ALL SELECT * FROM cells UNION ALL SELECT * FROM no_position
 )
 SELECT uai,
-       ST_AsGeoJSON(ST_Multi(ST_SimplifyPreserveTopology(ST_Union(geom), :simplify)), :decimals)
-           AS geometry,
+       ST_AsGeoJSON(ST_Multi(ST_CollectionExtract(ST_MakeValid(
+           ST_SimplifyPreserveTopology(ST_Union(geom), :simplify)), 3)), :decimals) AS geometry,
        bool_or(approx) AS approx,
        array_agg(DISTINCT departement ORDER BY departement) AS departements
 FROM parts

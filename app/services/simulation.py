@@ -19,10 +19,14 @@ def _ranks(rows: list[dict[str, Any]], key: str) -> dict[str, int]:
     return {r["uai"]: i + 1 for i, r in enumerate(ordered)}
 
 
-def simulate(store: DataStore, params: ScoringParams, tri: str = "score", top: int = 10) -> dict[str, Any]:
+def simulate(
+    store: DataStore, params: ScoringParams, tri: str = "score", top: int = 10,
+    uais: list[str] | None = None,
+) -> dict[str, Any]:
+    """`uais`: the schools to recompute (the user's area); None: all."""
     current, simulated = ScoringParams.from_settings(), params
     rows = []
-    for uai in store.uais():
+    for uai in store.uais() if uais is None else uais:
         college = store.get_college(uai)
         before = compute_risk_profile(college, current)
         after = compute_risk_profile(college, simulated)

@@ -46,6 +46,7 @@ def test_schools_without_enrolment_come_last(client, monkeypatch):
     store = get_store()
     uai = client.get(f"{API}/colleges", params={"tri": "priorite"}).json()[0]["uai"]
     monkeypatch.setitem(store._profiles[uai], "indice_priorite", None)
+    store._cache.clear()  # the store caches its lists (its data never changes in production)
     rows = client.get(f"{API}/colleges", params={"tri": "priorite"}).json()
     assert rows[-1]["uai"] == uai and rows[-1]["indice_priorite"] is None
 

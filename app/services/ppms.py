@@ -73,25 +73,39 @@ def compute_status(
     )
 
 
+IN_LIST_MAX = 500
+
+
 def statuses(session: Session, uais: list[str], today: date | None = None) -> dict[str, PpmsStatus]:
     """Status of many schools with two queries (not one per school)."""
     today = today or date.today()
-    last = dict(
-        session.exec(
-            select(PpmsRevision.uai, func.max(PpmsRevision.date_mise_a_jour))
-            .where(PpmsRevision.uai.in_(uais))
-            .group_by(PpmsRevision.uai)
-        ).all()
-    )
+    # Thousands of schools: an IN list of that size is slower than reading the (small) PPMS
+    # tables whole and keeping the wanted schools.
+    wanted = set(uais)
+    many = len(wanted) > IN_LIST_MAX
+    revisions = select(PpmsRevision.uai, func.max(PpmsRevision.date_mise_a_jour)).group_by(PpmsRevision.uai)
+    if not many:
+        revisions = revisions.where(PpmsRevision.uai.in_(wanted))
+    last = {uai: day for uai, day in session.exec(revisions).all() if uai in wanted}
     drills: dict[str, list[tuple[TypeExercice, date]]] = defaultdict(list)
-    for uai, kind, day in session.exec(
-        select(PpmsExercice.uai, PpmsExercice.type_exercice, PpmsExercice.date_exercice).where(
-            PpmsExercice.uai.in_(uais),
-            PpmsExercice.date_exercice >= school_year_start(today),
-        )
-    ).all():
-        drills[uai].append((TypeExercice(kind), day))
-    return {uai: compute_status(last.get(uai), drills[uai], today) for uai in uais}
+    exercises = select(PpmsExercice.uai, PpmsExercice.type_exercice, PpmsExercice.date_exercice).where(
+        PpmsExercice.date_exercice >= school_year_start(today)
+    )
+    if not many:
+        exercises = exercises.where(PpmsExercice.uai.in_(wanted))
+    for uai, kind, day in session.exec(exercises).all():
+        if uai in wanted:
+            drills[uai].append((TypeExercice(kind), day))
+    # Same inputs, same status: most schools have no PPMS data yet, so for all of France this
+    # computes a handful of statuses instead of thousands (read-only, shared objects).
+    computed: dict[tuple, PpmsStatus] = {}
+    out = {}
+    for uai in uais:
+        key = (last.get(uai), tuple(sorted(drills.get(uai, ()))))
+        if key not in computed:
+            computed[key] = compute_status(key[0], list(key[1]), today)
+        out[uai] = computed[key]
+    return out
 
 
 def status_for(session: Session, uai: str, today: date | None = None) -> PpmsStatus:

@@ -36,6 +36,16 @@ class UserCollegeLink(SQLModel, table=True):
     uai: str = Field(primary_key=True, max_length=8, index=True)
 
 
+class UserDepartementLink(SQLModel, table=True):
+    """The area of an administrator or a reader: no row means all of France. An academy
+    administrator has the departments of the académie. (Referents: their schools.)"""
+
+    __tablename__ = "user_departement"
+
+    user_id: int = Field(foreign_key="app_user.id", primary_key=True)
+    departement: str = Field(primary_key=True, max_length=3, index=True)
+
+
 class AuditLog(SQLModel, table=True):
     __tablename__ = "audit_log"
 
@@ -48,6 +58,8 @@ class AuditLog(SQLModel, table=True):
     details: str | None = None
     remote_addr: str | None = Field(default=None, max_length=64)
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC), index=True)
+    # Department of the school concerned, when there is one: department admins see these.
+    departement: str | None = Field(default=None, max_length=3, index=True)
 
 
 # Deliberately simple: one "@", a dot in the domain, no spaces. The real check is the
@@ -69,6 +81,8 @@ class UserCreate(SQLModel):
     password: str = Field(min_length=12, max_length=256)
     role: UserRole = UserRole.lecteur
     school_uais: list[str] = Field(default_factory=list)
+    # Admins and readers: their area (department codes); empty = all of France.
+    departements: list[str] = Field(default_factory=list)
     email: str | None = None
     alertes_email: bool = False
 
@@ -80,6 +94,7 @@ class UserUpdate(SQLModel):
     role: UserRole | None = None
     active: bool | None = None
     school_uais: list[str] | None = None
+    departements: list[str] | None = None
     email: str | None = None
     alertes_email: bool | None = None
 
@@ -106,6 +121,7 @@ class UserRead(SQLModel):
     role: UserRole
     active: bool
     school_uais: list[str]
+    departements: list[str]  # admins and readers: empty = all of France
     email: str | None
     alertes_email: bool
     created_at: datetime
@@ -127,3 +143,4 @@ class AuditLogRead(SQLModel):
     details: str | None
     remote_addr: str | None
     created_at: datetime
+    departement: str | None = None

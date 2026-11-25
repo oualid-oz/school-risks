@@ -6,6 +6,7 @@ from sqlmodel import Session, func, select
 
 from app.api.routes.auth import limiter
 from app.core.config import settings
+from app.core.scope import Scope, get_scope
 from app.core.security import get_current_user
 from app.data.store import DataStore, get_store
 from app.db import get_session
@@ -24,16 +25,19 @@ def overview(
     departement: str | None = None,
     store: DataStore = Depends(get_store),
     session: Session = Depends(get_session),
+    scope: Scope = Depends(get_scope),
 ):
-    """Dashboard numbers: risk distribution plus follow-up progress."""
-    uais = [c["uai"] for c in store.list_colleges(departement=departement)]
+    """Dashboard numbers for the user's area: risk distribution plus follow-up progress."""
+    scope.check_departement(departement)
+    uais = [c["uai"] for c in store.list_colleges(departement=departement, area=scope.departements)]
     stmt = select(Action.statut, func.count()).group_by(Action.statut)
-    if departement:
+    if departement or not scope.national:
         stmt = stmt.where(Action.uai.in_(uais))
     rows = session.exec(stmt).all()
     ppms = Counter(s.statut for s in ppms_statuses(session, uais).values())
+    session.close()  # done with the database: free the connection before serialising
     return {
-        **store.stats(departement),
+        **store.stats(departement, scope.departements),
         "actions_par_statut": {s.value: n for s, n in rows},
         "ppms_par_statut": {k: ppms.get(k, 0) for k in ("a_jour", "ancien", "absent")},
     }
@@ -44,7 +48,9 @@ territories_router = APIRouter(tags=["stats"], dependencies=[Depends(get_current
 
 @territories_router.get("/territoires", response_model=list[dict[str, Any]])
 @limiter.limit(settings.rate_limit_default)
-def territories(request: Request, store: DataStore = Depends(get_store)):
-    """Departments in the data: code, name, académie, number of schools, and how many of them
-    have parts of the evaluation missing (no data for the territory)."""
-    return store.territories()
+def territories(
+    request: Request, store: DataStore = Depends(get_store), scope: Scope = Depends(get_scope)
+):
+    """Departments of the user's area: code, name, académie, number of schools, how many
+    have parts of the evaluation missing, mean score, high-risk schools, sector sources."""
+    return store.territories(scope.departements)

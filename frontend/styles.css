@@ -120,7 +120,6 @@ main:focus, h1:focus { outline: 0; }
 .level-faible { background: #e8f4ec; color: #2c6d48; }
 .level-moyen { background: #fdf1df; color: #865620; }
 .level-eleve { background: #fbe6e3; color: #a33d35; }
-.env-block { background: #f6f8f6; border: 1px solid var(--line); border-radius: 8px; padding: 12px; font-size: 11px; overflow-x: auto; margin: 0; white-space: pre; }
 /* Actions */
 .panel-head-row { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
 .action-card.overdue { border-color: #f1c9c2; }

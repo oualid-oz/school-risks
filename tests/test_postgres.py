@@ -84,8 +84,9 @@ def test_database_store_matches_file_store(pg_engine, monkeypatch):
     from_db, from_files = DataStore("database"), DataStore("files")
     pd.testing.assert_frame_equal(from_db.risques.sort_values("uai").reset_index(drop=True),
                                   from_files.risques.sort_values("uai").reset_index(drop=True))
-    pd.testing.assert_frame_equal(from_db.history.sort_values(["uai", "rentree"]).reset_index(drop=True),
-                                  from_files.history.sort_values(["uai", "rentree"]).reset_index(drop=True))
+    # The database store reads one school's history at a time (not held in memory).
+    assert from_db.history is None
+    assert all(from_db.get_history(uai) == from_files.get_history(uai) for uai in from_files.uais())
     assert from_db.list_colleges() == from_files.list_colleges()
     assert len(from_db.secteurs["features"]) == len(from_files.secteurs["features"])
 

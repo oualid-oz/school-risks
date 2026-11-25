@@ -55,9 +55,11 @@ def load_reference(engine: Engine, data_dir: Path | None = None) -> dict[str, in
             conn.execute(
                 secteur.insert().values(
                     **{k: f["properties"].get(k) for k in SECTOR_FIELDS},
-                    geom=func.ST_Multi(
+                    # Repaired on load: simplified or merged outlines can self-intersect,
+                    # which point-in-sector queries do not handle.
+                    geom=func.ST_Multi(func.ST_CollectionExtract(func.ST_MakeValid(
                         func.ST_SetSRID(func.ST_GeomFromGeoJSON(json.dumps(f["geometry"])), 4326)
-                    ),
+                    ), 3)),
                 )
             )
         for row in _rows(risques):
@@ -81,17 +83,29 @@ def load_reference(engine: Engine, data_dir: Path | None = None) -> dict[str, in
     }
 
 
-def read_reference(engine: Engine) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, Any]]:
-    """(risques, history, sectors FeatureCollection), shaped exactly like the files."""
+def read_history(engine: Engine, uai: str | None = None) -> pd.DataFrame:
+    """School-year rows, of one school or of all of them, shaped like the file."""
+    stmt = select(*[college_annee.c[c] for c in HISTORY_SCHEMA]).order_by(
+        college_annee.c.uai, college_annee.c.rentree
+    )
+    if uai is not None:
+        stmt = stmt.where(college_annee.c.uai == uai)
+    with engine.connect() as conn:
+        history = pd.read_sql(stmt, conn)
+    for column, dtype in HISTORY_SCHEMA.items():
+        history[column] = history[column].astype(dtype)
+    return history
+
+
+def read_reference(
+    engine: Engine, with_history: bool = True
+) -> tuple[pd.DataFrame, pd.DataFrame | None, dict[str, Any]]:
+    """(risques, history, sectors FeatureCollection), shaped exactly like the files.
+    `with_history=False`: the API reads one school's history at a time (read_history)."""
+    history = read_history(engine) if with_history else None
     with engine.connect() as conn:
         risques = pd.read_sql(
             select(*[college.c[c] for c in RISQUES_SCHEMA]).order_by(college.c.uai), conn
-        )
-        history = pd.read_sql(
-            select(*[college_annee.c[c] for c in HISTORY_SCHEMA]).order_by(
-                college_annee.c.uai, college_annee.c.rentree
-            ),
-            conn,
         )
         sector_rows = conn.execute(
             select(
@@ -101,9 +115,8 @@ def read_reference(engine: Engine) -> tuple[pd.DataFrame, pd.DataFrame, dict[str
             ).order_by(secteur.c.secteur_id)
         ).mappings().all()
 
-    for df, schema in ((risques, RISQUES_SCHEMA), (history, HISTORY_SCHEMA)):
-        for column, dtype in schema.items():
-            df[column] = df[column].astype(dtype)
+    for column, dtype in RISQUES_SCHEMA.items():
+        risques[column] = risques[column].astype(dtype)
     features = [
         {
             "type": "Feature",

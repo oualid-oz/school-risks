@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field, model_validator
 
 from app.api.routes.auth import limiter
 from app.core.config import settings
+from app.core.scope import Scope, get_scope
 from app.core.security import get_current_user
 from app.data.store import DataStore, get_store
 from app.services.scoring import HAZARD_NAMES, POINT_SCALES, ScoringParams
@@ -73,10 +74,14 @@ def current_parameters(request: Request):
 
 @router.post("/simulation")
 @limiter.limit(settings.rate_limit_default)
-def run_simulation(request: Request, payload: SimulationIn, store: DataStore = Depends(get_store)):
-    """Today's scores, levels and ranks next to the ones these parameters would give."""
+def run_simulation(
+    request: Request, payload: SimulationIn, store: DataStore = Depends(get_store),
+    scope: Scope = Depends(get_scope),
+):
+    """Today's scores, levels and ranks (in the user's area) next to the ones these
+    parameters would give."""
     try:
         params = payload.to_params()
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from None
-    return simulate(store, params, payload.tri)
+    return simulate(store, params, payload.tri, uais=None if scope.national else scope.visible_uais(store))
