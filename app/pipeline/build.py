@@ -4,25 +4,26 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import shutil
+import zlib
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import pandas as pd
+from sqlalchemy.engine import Engine
 
 from app.core.config import settings
 from app.data.schema import HISTORY_SCHEMA, RISQUES_SCHEMA
-from app.pipeline import education, georisques, nuclear, sectors
+from app.pipeline import bulk, education, georisques, nuclear, sectors
 from app.pipeline.client import Fetcher
 from app.pipeline.geo import haversine_km, nearest_centrale
 from app.services.scoring import compute_risk_profile
 
 logger = logging.getLogger(__name__)
 
-# Columns with no public point API. They are copied from the published file and listed
-# in the report, so whoever runs the pipeline knows they were not refreshed.
 def _department_of(row: Any) -> str:
     value = row.get("departement") if hasattr(row, "get") else None
     if isinstance(value, str) and value:
@@ -31,6 +32,20 @@ def _department_of(row: Any) -> str:
     return code[:3] if code.startswith("97") else code[:2]
 
 
+# "All of France" is mainland France and Corsica for now; overseas comes with Sprint 22.
+MAINLAND = re.compile(r"^(0[1-9]|1[0-9]|2[1-9AB]|[3-8][0-9]|9[0-5])$")
+CLAY_CYCLE_MONTHS = 6
+
+
+def clay_due(uai: str, now: datetime) -> bool:
+    """Bulk mode re-checks each school's clay exposure every CLAY_CYCLE_MONTHS months, a
+    stable sixth of the schools per month: the clay map changes rarely, and one call per
+    school for all of France would take half the monthly run."""
+    return zlib.crc32(uai.encode()) % CLAY_CYCLE_MONTHS == (now.year * 12 + now.month) % CLAY_CYCLE_MONTHS
+
+
+# Columns with no public point API. They are copied from the published file and listed
+# in the report, so whoever runs the pipeline knows they were not refreshed.
 CARRIED_OVER = [
     "secteur_id",
     "distance_tmd_m",
@@ -91,6 +106,10 @@ def build(
     first_year: int = 2016,
     workers: int = 4,
     keep: list[str] | None = None,
+    bulk_engine: Engine | None = None,
+    bulk_cache: Path | None = None,
+    offline: bool = False,
+    refresh_clay: bool = False,
 ) -> BuildResult:
     """Rebuild both tables for the collèges of ``departements`` (default: settings).
 
@@ -101,15 +120,24 @@ def build(
     refreshing them (for example while a source change is being reviewed).
     """
     departements = sorted(departements or settings.departements)
+    everything = departements == ["ALL"]  # all of France: bulk mode only
+    if everything and bulk_engine is None:
+        raise ValueError("All of France needs the bulk mode (SRT_PIPELINE_DATABASE_URL)")
     keep = list(keep or [])
     unknown = [c for c in keep if c not in RISQUES_SCHEMA or c == "uai"]
     if unknown:
         raise ValueError(f"Unknown columns for --keep: {unknown}")
-    notes: list[str] = [f"Departments: {', '.join(departements)}"]
+    notes: list[str] = []
     roster = previous_risques.set_index("uai")
 
     logger.info("Downloading the education directory for %s", departements)
-    annuaire = education.annuaire_by_uai(education.fetch_directory(fetcher, departements))
+    annuaire = education.annuaire_by_uai(
+        education.fetch_directory(fetcher, None if everything else departements)
+    )
+    if everything:  # mainland France and Corsica; overseas departments come later (Sprint 22)
+        annuaire = {u: a for u, a in annuaire.items() if MAINLAND.match(a["departement"] or "")}
+        departements = sorted({a["departement"] for a in annuaire.values() if a["tracked"]})
+    notes.append(f"Departments ({len(departements)}): {', '.join(departements)}")
     uais = sorted(u for u, a in annuaire.items() if a["tracked"])
     if not uais:
         raise ValueError(f"No collège found in the directory for {departements}")
@@ -119,9 +147,10 @@ def build(
         u for u in roster.index if u not in listed and _department_of(roster.loc[u]) in departements
     )
     if added:
-        notes.append(f"Schools added ({len(added)}): {added[:20]}{' …' if len(added) > 20 else ''}")
+        notes.append(f"Schools added ({len(added)}): {_capped(added)}")
     if gone:
-        notes.append(f"Schools no longer listed as open collèges in the directory: {gone}")
+        notes.append(f"Schools no longer listed as open collèges in the directory ({len(gone)}): "
+                     f"{_capped(gone)}")
 
     logger.info("Downloading data.education.gouv.fr datasets (%d schools)", len(uais))
     edu = education.fetch_all(fetcher, uais)
@@ -156,14 +185,42 @@ def build(
     if moved:
         notes.append(
             f"Directory position differs by more than {COORDINATE_DRIFT_KM * 1000:.0f} m "
-            f"(kept the published position; check and fix by hand if needed): {', '.join(moved)}"
+            f"(kept the published position; check and fix by hand if needed): {_capped(moved)}"
         )
 
     history = _typed(education.build_history(schools, edu, first_year), HISTORY_SCHEMA)
     latest = history.sort_values("rentree").groupby("uai").last()
 
-    logger.info("Downloading Géorisques data")
-    geo = georisques.fetch_all(fetcher, schools, workers)
+    if bulk_engine is not None:
+        logger.info("Bulk mode: national files into PostGIS")
+        dl = bulk.Downloader(bulk_cache or settings.data_dir / "raw" / "bulk", offline=offline)
+        try:
+            bulk.reset_schema(bulk_engine)
+            loaded = bulk.load_national(bulk_engine, dl)
+            nearby = bulk.departments_near(bulk_engine, schools)
+            loaded |= bulk.load_departmental(bulk_engine, dl, nearby)
+        finally:
+            dl.close()
+        computed = bulk.indicators(bulk_engine, schools)
+        # Clay: new schools, plus a rolling sixth of the others each month (see clay_due).
+        due = [s for s in schools
+               if refresh_clay or s["uai"] not in roster.index or clay_due(s["uai"], datetime.now(UTC))]
+        clay = georisques.fetch_clay(fetcher, due, workers)
+        ppr = georisques.fetch_ppr_batched(fetcher, schools, workers)
+        if len(due) < len(schools):
+            notes.append(
+                f"Clay exposure re-checked for {len(due)} schools (new ones and this month's "
+                f"rolling sixth); the {len(schools) - len(due)} others keep the published value."
+            )
+        notes.append(
+            f"Bulk mode: {loaded['icpe']} ICPE, {loaded['catnat']} CatNat rows, "
+            f"{loaded['cavites']} cavities, {loaded['mvt']} ground movements "
+            f"({loaded['departements']} departments). ICPE counts include "
+            "sites winding down (the bulk file has no activity state)."
+        )
+    else:
+        logger.info("Downloading Géorisques data")
+        geo = georisques.fetch_all(fetcher, schools, workers)
     plants, plant_problems = nuclear.fetch_plants(fetcher)
     if plant_problems:
         notes.append(f"Nuclear plants not confirmed by Géorisques: {plant_problems}")
@@ -172,25 +229,33 @@ def build(
     for s in schools:
         uai = s["uai"]
         prev = roster.loc[uai] if uai in roster.index else None
-        point = geo["schools"][uai]
-        commune = geo["communes"][s["code_insee"]]
+        if bulk_engine is not None:
+            point, measured = {"ppr": ppr[uai], "rga": clay.get(uai)}, computed[uai]
+        else:
+            point = geo["schools"][uai]
+            commune = geo["communes"][s["code_insee"]]
+            measured = {
+                "nb_cavites_500m": len(point["cavites"]),
+                "nb_mouvements_terrain_500m": len(point["mvt"]),
+                **georisques.icpe_metrics(s["lat"], s["lon"], point["icpe"]),
+                **georisques.catnat_counts(commune["catnat"]),
+                "annee_dicrim": georisques.annee_dicrim(commune["dicrim"]),
+            }
         plan = georisques.ppri(point["ppr"])
         centrale, centrale_km = nearest_centrale(s["lat"], s["lon"], plants)
         rows.append(
             {
                 **s,
-                "effectif_total": latest.loc[uai, "effectif_total"],
-                "ips": latest.loc[uai, "ips"],
-                "argiles_classe": georisques.argiles_classe(point["rga"]),
+                # A school just opened has no school-year figures yet: unknown, not an error.
+                "effectif_total": latest.loc[uai, "effectif_total"] if uai in latest.index else None,
+                "ips": latest.loc[uai, "ips"] if uai in latest.index else None,
+                "argiles_classe": georisques.argiles_classe(point["rga"])
+                if bulk_engine is None or uai in clay else prev["argiles_classe"],
                 "dans_ppri": plan is not None,
                 "ppri": plan or "",
-                "nb_cavites_500m": len(point["cavites"]),
-                "nb_mouvements_terrain_500m": len(point["mvt"]),
-                **georisques.icpe_metrics(s["lat"], s["lon"], point["icpe"]),
+                **measured,
                 "distance_centrale_km": round(centrale_km, 1),
                 "centrale_proche": centrale,
-                **georisques.catnat_counts(commune["catnat"]),
-                "annee_dicrim": georisques.annee_dicrim(commune["dicrim"]),
                 # No public source: copied for the schools already published, unknown otherwise.
                 **{c: (prev[c] if prev is not None else None) for c in CARRIED_OVER + keep
                    if c != "secteur_id"},
@@ -224,8 +289,12 @@ def validate(result: BuildResult, previous_risques: pd.DataFrame) -> list[str]:
     for dep, count in before.items():
         if dep in after.index and after[dep] < 0.9 * count:
             errors.append(f"risques: department {dep} drops from {count} to {after[dep]} schools")
-    if set(h["uai"]) != set(r["uai"]):
-        errors.append("history: schools differ from the risk table")
+    if not set(h["uai"]) <= set(r["uai"]):
+        errors.append("history: schools missing from the risk table")
+    # A school that just opened has no school-year figures yet; many of them is a broken source.
+    without = sorted(set(r["uai"]) - set(h["uai"]))
+    if len(without) > max(2, 0.01 * len(r)):
+        errors.append(f"history: {len(without)} schools without any school-year figures: {_capped(without)}")
     if r["uai"].duplicated().any():
         errors.append("risques: duplicate UAI")
     if h.duplicated(["uai", "rentree"]).any():
@@ -332,7 +401,43 @@ def compare(
         "columns": changes, "scores": scores, "history": history,
         "added": sorted(set(new["uai"]) - set(old["uai"])),
         "removed": sorted(set(old["uai"]) - set(new["uai"])),
+        "departements": _by_department(new, old, new_p, scores),
     }
+
+
+def _by_department(
+    new: pd.DataFrame, old: pd.DataFrame, new_p: dict[str, dict[str, Any]], scores: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """One line per department: what a reviewer of a national refresh looks at first."""
+    dep_new = {r["uai"]: _department_of(r) for _, r in new.iterrows()}
+    dep_old = {r["uai"]: _department_of(r) for _, r in old.iterrows()}
+    moved = {s["uai"] for s in scores if s["old_niveau"] != s["new_niveau"]}
+    out = []
+    for dep in sorted(set(dep_new.values()) | set(dep_old.values())):
+        here = [u for u, d in dep_new.items() if d == dep]
+        before = {u for u, d in dep_old.items() if d == dep}
+        profiles = [new_p[u] for u in here]
+        out.append({
+            "departement": dep,
+            "schools": len(here),
+            "previous": len(before),
+            "added": len(set(here) - before),
+            "removed": len(before - set(here)),
+            "level_changes": len(moved & set(here)),
+            "mean_score": round(sum(p["score_global"] for p in profiles) / len(profiles), 1)
+            if profiles else None,
+            "eleve": sum(1 for p in profiles if p["niveau"] == "eleve"),
+            "incomplete": sum(1 for p in profiles if p.get("lacunes")),
+        })
+    return out
+
+
+REPORT_MAX_LINES = 50  # a national refresh must still give a readable report
+
+
+def _capped(items: list[Any], limit: int = 20) -> str:
+    shown = ", ".join(str(i) for i in items[:limit])
+    return shown + (f" … (+{len(items) - limit})" if len(items) > limit else "")
 
 
 def _plain(value: Any) -> Any:
@@ -350,18 +455,34 @@ def render_report(
         f"- Schools: {len(result.risques)}, history rows: {len(result.history)} "
         f"(school years {result.history['rentree'].min()}–{result.history['rentree'].max()})",
         f"- Added schools: {len(diff.get('added', []))}, removed: {len(diff.get('removed', []))}"
-        + (f" {diff['removed']}" if diff.get("removed") else ""),
+        + (f" {_capped(diff['removed'])}" if diff.get("removed") else ""),
         f"- Validation: {'**FAILED**' if errors else 'passed'}",
     ]
     lines += [f"  - {e}" for e in errors]
     lines += ["", "## Notes", ""] + [f"- {n}" for n in result.notes]
 
+    deps = diff.get("departements") or []
+    if len(deps) > 1:
+        lines += [
+            "", "## Per department", "",
+            "| Dept | Schools | Before | Added | Removed | Level changes | Mean score | High | Incomplete |",
+            "|---|---|---|---|---|---|---|---|---|",
+        ]
+        lines += [
+            f"| {d['departement']} | {d['schools']} | {d['previous']} | {d['added']} | {d['removed']} "
+            f"| {d['level_changes']} | {d['mean_score'] if d['mean_score'] is not None else '–'} "
+            f"| {d['eleve']} | {d['incomplete']} |"
+            for d in deps
+        ]
+
     moved = [s for s in diff["scores"] if s["old_niveau"] != s["new_niveau"]]
     lines += ["", f"## Level changes ({len(moved)})", ""]
     lines += [
         f"- {s['uai']} {s['nom']}: {s['old_niveau']} → {s['new_niveau']} ({s['old']} → {s['new']})"
-        for s in moved
+        for s in moved[:REPORT_MAX_LINES]
     ] or ["None."]
+    if len(moved) > REPORT_MAX_LINES:
+        lines.append(f"- … and {len(moved) - REPORT_MAX_LINES} more (largest score changes first)")
 
     lines += ["", "## Biggest score changes", "", "| UAI | School | Old | New |", "|---|---|---|---|"]
     lines += [

@@ -3,6 +3,7 @@
     python -m app.pipeline build              # download, rebuild, validate, write a report
     python -m app.pipeline build --publish    # ...and replace data/*.parquet if valid
     python -m app.pipeline build --keep argiles_classe   # refresh all but that column
+    python -m app.pipeline build --departements all      # all of France (bulk mode only)
     python -m app.pipeline snapshot           # store this year's scores in the database
 
 The API loads the data files once at startup: restart it after publishing.
@@ -36,15 +37,31 @@ def cmd_build(args: argparse.Namespace) -> int:
     previous_history = pd.read_parquet(data_dir / settings.colleges_file)
 
     departements = parse_departements(args.departements) if args.departements else settings.departements
-    if "ALL" in departements:
-        print("All of France needs the bulk-data pipeline (Sprint 18): list departments instead, "
-              "e.g. --departements 45,17,74.", file=sys.stderr)
+    source = args.source or ("bulk" if settings.pipeline_database_url else "api")
+    if source == "bulk" and not settings.pipeline_database_url:
+        print("--source bulk needs SRT_PIPELINE_DATABASE_URL (a PostGIS database).", file=sys.stderr)
         return 2
-    with Fetcher(cache, offline=args.offline) as fetcher:
-        result = build(
-            fetcher, previous, departements=departements, first_year=args.first_year,
-            workers=args.workers, keep=args.keep,
-        )
+    if "ALL" in departements:
+        departements = ["ALL"]
+    if departements == ["ALL"] and source != "bulk":
+        print("All of France needs the bulk mode (--source bulk and SRT_PIPELINE_DATABASE_URL).",
+              file=sys.stderr)
+        return 2
+    bulk_engine = None
+    if source == "bulk":
+        from sqlalchemy import create_engine
+
+        bulk_engine = create_engine(settings.pipeline_database_url)
+    try:
+        with Fetcher(cache, offline=args.offline) as fetcher:
+            result = build(
+                fetcher, previous, departements=departements, first_year=args.first_year,
+                workers=args.workers, keep=args.keep, bulk_engine=bulk_engine,
+                bulk_cache=cache / "bulk", offline=args.offline, refresh_clay=args.refresh_clay,
+            )
+    finally:
+        if bulk_engine is not None:
+            bulk_engine.dispose()
 
     errors = validate(result, previous)
     diff = compare(result.risques, previous, result.history, previous_history)
@@ -118,7 +135,16 @@ def main(argv: list[str] | None = None) -> int:
     b.add_argument("--workers", type=int, default=4, help="Parallel API requests")
     b.add_argument(
         "--departements", metavar="CODES",
-        help="Departments to build, e.g. 45,17,74 (default: SRT_DEPARTEMENTS, else 45)",
+        help="Departments to build, e.g. 45,17,74, or all (default: SRT_DEPARTEMENTS, else 45)",
+    )
+    b.add_argument(
+        "--source", choices=["bulk", "api"],
+        help="bulk: national files + PostGIS (default when SRT_PIPELINE_DATABASE_URL is set); "
+        "api: one Géorisques query per school",
+    )
+    b.add_argument(
+        "--refresh-clay", action="store_true",
+        help="Bulk mode: re-check the clay exposure of every school (default: a sixth per month)",
     )
     b.add_argument(
         "--keep",

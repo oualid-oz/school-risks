@@ -14,7 +14,7 @@ from collections.abc import Callable, Iterable
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
-from app.pipeline.client import Fetcher
+from app.pipeline.client import Fetcher, SourceError
 from app.pipeline.geo import haversine_km
 
 logger = logging.getLogger(__name__)
@@ -107,6 +107,59 @@ def fetch_all(
         "schools": _parallel(per_school, by_uai, workers),
         "communes": _parallel(per_commune, communes, workers),
     }
+
+
+def fetch_clay(
+    fetcher: Fetcher, schools: list[dict[str, Any]], workers: int = 4
+) -> dict[str, dict[str, Any] | None]:
+    """Clay exposure per school (no bulk file of usable size: the national map is 600 MB)."""
+    by_uai = {s["uai"]: s for s in schools}
+    logger.info("Clay exposure: %d schools", len(schools))
+    return _parallel(lambda uai: fetcher.get_json(f"{API}/rga", {"latlon": _latlon(by_uai[uai])}),
+                     by_uai, workers)
+
+
+# The same easements as GPU_API, from IGN's WFS: it answers "which flood-plan zones contain
+# any of these points" for a whole batch in ~0.1 s, where GPU_API takes seconds per point
+# and times out under parallel load. Most schools are outside any zone, so a batch is only
+# split (in halves, down to single schools) when it contains a zone.
+WFS_SUP = "https://data.geopf.fr/wfs/ows"
+PPR_BATCH = 64
+PPR_WORKERS = 2  # IGN's gateway rate-limits (HTTP 429) bursts of parallel queries
+
+
+def _zones_containing(fetcher: Fetcher, schools: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    points = ",".join(f"({s['lat']} {s['lon']})" for s in schools)  # EPSG:4326 axis order
+    body = fetcher.get_json(WFS_SUP, {
+        "service": "WFS", "version": "2.0.0", "request": "GetFeature",
+        "typeNames": "wfs_sup:assiette_sup_s", "outputFormat": "application/json", "count": 1000,
+        "propertyName": "gid,nomass,nomsuplitt",
+        "CQL_FILTER": f"suptype='pm1' AND INTERSECTS(the_geom,MULTIPOINT({points}))",
+    })
+    if body is None or "features" not in body:
+        raise SourceError(f"Unexpected answer from the easements WFS: {str(body)[:200]}")
+    return body["features"]
+
+
+def fetch_ppr_batched(
+    fetcher: Fetcher, schools: list[dict[str, Any]], workers: int = 4
+) -> dict[str, dict[str, Any]]:
+    """{uai: {"features": [...]}} — the shape of GPU_API answers, for `ppri()`."""
+    def resolve(batch: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+        features = _zones_containing(fetcher, batch)
+        if not features or len(batch) == 1:
+            return {s["uai"]: {"features": features} for s in batch}
+        half = len(batch) // 2
+        return resolve(batch[:half]) | resolve(batch[half:])
+
+    ordered = sorted(schools, key=lambda s: (round(s["lat"], 1), s["lon"]))  # neighbours together
+    batches = [ordered[i:i + PPR_BATCH] for i in range(0, len(ordered), PPR_BATCH)]
+    logger.info("Flood-plan zones: %d schools in %d batches", len(schools), len(batches))
+    out: dict[str, dict[str, Any]] = {}
+    with ThreadPoolExecutor(max_workers=min(workers, PPR_WORKERS)) as pool:
+        for part in pool.map(resolve, batches):
+            out |= part
+    return out
 
 
 # ---- transforms -------------------------------------------------------------

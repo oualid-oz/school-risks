@@ -28,7 +28,7 @@ class Fetcher:
         self,
         cache_dir: Path,
         offline: bool = False,
-        retries: int = 4,
+        retries: int = 6,  # backoff 1+2+4+8+16 s: rides out a burst of resets in a long run
         timeout: float = 60.0,
         transport: httpx.BaseTransport | None = None,
         backoff: float = 1.0,
@@ -89,6 +89,9 @@ class Fetcher:
                 continue
             if response.status_code in _RETRY_STATUS:
                 last_error = SourceError(f"HTTP {response.status_code}")
+                wait = response.headers.get("Retry-After", "")
+                if wait.isdigit():  # rate limited: wait as long as the server asks (capped)
+                    time.sleep(min(int(wait), 120))
                 continue
             if response.status_code in (204, 404):
                 return None
@@ -98,5 +101,9 @@ class Fetcher:
                 )
             if not response.content.strip():
                 return None  # Géorisques answers an empty 200 for unmapped points
-            return response.json()
+            try:
+                return response.json()
+            except ValueError:  # a gateway under load sometimes answers 200 with another body
+                last_error = SourceError(f"not JSON: {response.text[:80]!r}")
+                continue
         raise SourceError(f"Giving up on {url} {params}: {last_error}")

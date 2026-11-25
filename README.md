@@ -156,7 +156,7 @@ Logins (successful and failed), action changes and user changes are written to t
 
 ## Refreshing the data
 
-**Departments.** The pipeline builds the collèges of the departments in `SRT_DEPARTEMENTS` (default `45`), or `--departements 45,17,74`. The schools come from the education directory: open collèges, public or private under contract. Schools already published keep their name, position and sector. Each school carries its department and académie, and the interface has a department selector when there are several. All of France (`all`) is refused for now: per-school API calls do not scale, see the national roadmap. For the monthly refresh, set the repository variable `SRT_DEPARTEMENTS`.
+**Departments.** The pipeline builds the collèges of the departments in `SRT_DEPARTEMENTS` (default `45`), or `--departements 45,17,74`. The schools come from the education directory: open collèges, public or private under contract. Schools already published keep their name, position and sector. Each school carries its department and académie, and the interface has a department selector when there are several. `--departements all` builds mainland France and Corsica (bulk mode only, see below). For the monthly refresh, set the repository variable `SRT_DEPARTEMENTS`.
 Outside the first published department, the TMD and flood-marker data have no public source: those schools get an **incomplete evaluation** (`lacunes` in the risk profile, a warning on the dashboard and on the school page). Their scores are minima, and the hazards specific to other territories (coast, mountains, earthquakes…) are not modelled yet. **Do not publish other departments for users before that.**
 
 ```bash
@@ -164,24 +164,36 @@ python -m app.pipeline build                          # dry run: download, rebui
 python -m app.pipeline build --publish --snapshot     # replace data/*.parquet, then store this year's scores
 python -m app.pipeline build --keep argiles_classe    # refresh everything except that column
 python -m app.pipeline snapshot --year 2026           # store the current scores for a year
+python -m app.pipeline build --departements all --workers 8   # all of France (bulk mode)
 ```
 
-Every run writes the rebuilt files and a `report.md` to `data/staging/<timestamp>/`. The report lists level changes, the biggest score changes and every changed value.
+**Bulk mode** (`app/pipeline/bulk.py`). With `SRT_PIPELINE_DATABASE_URL` pointing to a scratch PostGIS database, or with `--source bulk`, the pipeline downloads the national files once instead of querying Géorisques for each school. These are the GASPAR export (CatNat, DICRIM), the ICPE file, and the cavity and ground-movement files of the departments within 1 km of a school. It loads them into a `bulk` schema and computes the indicators for every school in one SQL query. Use a separate database, never the application one: the `bulk` schema is dropped and rebuilt at every run. Two indicators remain point lookups:
+- **PPRI zone:** IGN's easements WFS answers "which flood-plan zones contain any of these schools" for 64 schools at a time. A batch is only split, down to single schools, when it contains a zone. On Loiret this gives the same plans as the GPU API.
+- **Clay exposure:** one Géorisques call per school, because the national map is 600 MB. The map changes rarely, so each month only new schools and a stable sixth of the others are re-checked; the rest keep the published value. Every school is re-checked twice a year, and `--refresh-clay` forces all of them.
+
+Without the setting, `--source api` keeps the per-school calls, which is fine for a few departments.
+Local setup, using the Compose database: `psql -h 127.0.0.1 -p 5433 -U srt school_risks -c "CREATE DATABASE school_risks_pipeline"`, then `SRT_PIPELINE_DATABASE_URL=postgresql+psycopg://srt:<password>@127.0.0.1:5433/school_risks_pipeline`.
+A cold all-of-France run takes about 35 minutes on a workstation. Most of it is the ICPE file, which the server generates on request (5–14 min), the flood-plan lookups (about 8 min) and, for a first build, the clay calls (about 6 min). The SQL takes under 10 s.
+On Loiret, bulk mode gives the same CatNat, DICRIM and ground-movement values as the API, a few more cavities (5 schools), and no level change. The ICPE counts include sites being shut down, because the national file has no activity state: `nb_icpe_1km` rises at 24 schools, by +0.17 points on average and at most +1.9. Seveso distances beyond 20 km are now found as well. Downloads are cached in `data/raw/<date>/bulk/`, so a run that stopped halfway resumes without downloading again.
+
+Every run writes the rebuilt files and a `report.md` to `data/staging/<timestamp>/`. The report lists level changes, the biggest score changes and every changed value. With several departments it starts with one line per department: schools, added and removed schools, level changes, mean score, high-risk schools and incomplete evaluations. Long lists are capped so that a national report stays readable.
 Nothing is published if validation fails (schema, school list, empty or out-of-range values).
 Publishing copies the previous files to `data/archive/<timestamp>/` first. To roll back, copy them back.
 Raw API responses are cached in `data/raw/<date>/`, so a re-run the same day (or `--offline`) needs no network.
 On Postgres, publishing also reloads the PostGIS reference tables. Restart the API after publishing: it loads the data once at startup.
 
 **Monthly refresh** (`.github/workflows/data-refresh.yml`, 2nd of each month, or by hand from the Actions tab): runs `deploy/data_refresh.sh`, which rebuilds and validates the data. If a file changed, it pushes a `data-refresh/YYYY-MM` branch and opens or updates a pull request whose description is the change report. Nothing reaches production before someone merges it. On merge, the Vercel build reloads the reference tables, because their fingerprint (`reference_load` table) no longer matches the files, and Docker reloads them at every deploy.
+The job runs in bulk mode against a throwaway PostGIS service container. The `workers` input sets the parallel per-school calls (default 8), and a report too long for a pull request description is cut there and kept whole in the run's artifact.
 With the default token, GitHub does not run CI on a pull request opened by a workflow. Add a `DATA_REFRESH_TOKEN` secret (fine-grained token with contents and pull-requests write) to get CI on it.
 To try it locally without git: `deploy/data_refresh.sh` (it publishes into `data/`).
 
 | Column(s) | Source |
 |---|---|
 | statut, history (enrolment, REP/REP+, IPS, DNB, value added) | data.education.gouv.fr: annuaire, effectifs, IPS (3 datasets), DNB par établissement, IVAC |
-| argiles_classe, cavities, ground movements, CatNat, DICRIM, ICPE / Seveso | Géorisques API v1 |
-| dans_ppri, ppri | IGN GPU API (servitude PM1) |
-| distance_centrale_km, centrale_proche | Static plant coordinates in `app/pipeline/geo.py` |
+| argiles_classe | Géorisques API v1 (one call per school; in bulk mode a rolling sixth of the schools per month) |
+| cavities, ground movements, CatNat, DICRIM, ICPE / Seveso | Géorisques API v1, or in bulk mode its download service (GASPAR national export, ICPE national CSV, cavity and ground-movement CSVs per department) |
+| dans_ppri, ppri | IGN GPU, servitude PM1: GPU API per school, or in bulk mode the easements WFS in batches |
+| distance_centrale_km, centrale_proche | The 18 nuclear power plants (`app/pipeline/nuclear.py`), positions confirmed by Géorisques |
 | Sector polygons (`colleges_secteurs.geojson`) | Département du Loiret, ArcGIS service of its GIS (also on data.gouv.fr), outlines generalised to ≈10 m by the service |
 | TMD columns, distance_repere_crue_km | **Not refreshed**: no usable public source yet, copied from the published file. Flood markers: the national platform's CSV export is capped at 500 rows. TMD: no public dataset of TMD routes for Loiret |
 
