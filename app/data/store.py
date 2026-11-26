@@ -279,7 +279,7 @@ class DataStore:
             "dans_zone_tmd_500m": sum(1 for r in rows if r["dans_zone_tmd_500m"]),
             "argiles_fort": sum(1 for r in rows if r["argiles_classe"] == "fort"),
             "dicrim_absent_ou_ancien": sum(
-                1 for p in profiles if any(a.startswith("DICRIM") for a in p["alertes"])
+                1 for p in profiles if any(a.startswith(("DICRIM absent", "DICRIM ancien")) for a in p["alertes"])
             ),
             "score_moyen_par_alea": {
                 h: round(sum(p["aleas"].get(h, 0.0) for p in profiles) / len(profiles), 1)

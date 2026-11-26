@@ -108,3 +108,9 @@ def test_global_score_is_the_weighted_mean_and_flags_dicrim(monkeypatch):
     assert no_dicrim["alertes"][0] == "DICRIM absent pour la commune"
     old = date.today().year - settings.dicrim_max_age_years - 1
     assert s.compute_risk_profile({**row, "annee_dicrim": old})["alertes"] == [f"DICRIM ancien ({old})"]
+
+
+def test_dicrim_placeholder_year_is_an_unknown_date_not_an_old_dicrim():
+    # GASPAR gives 1900 when a commune's DICRIM has no publication date.
+    alerts = s.compute_risk_profile({"annee_dicrim": 1900, "effectif_total": 100})["alertes"]
+    assert alerts == ["DICRIM : date de publication inconnue"]

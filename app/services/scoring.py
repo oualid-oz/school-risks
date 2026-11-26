@@ -190,6 +190,8 @@ def niveau(score: float, params: ScoringParams | None = None) -> str:
     return "faible"
 
 
+# DICRIMs exist since the decree of 1990; earlier years in GASPAR are placeholders (1900).
+DICRIM_FIRST_YEAR = 1990
 EFFECTIF_INCONNU = "Effectif inconnu : indice de priorité non calculé"
 
 
@@ -221,6 +223,8 @@ def compute_risk_profile(r: dict[str, Any], params: ScoringParams | None = None)
     annee = r.get("annee_dicrim")
     if annee is None:
         alertes.append("DICRIM absent pour la commune")
+    elif annee < DICRIM_FIRST_YEAR:  # GASPAR's placeholder date (1900): published, date unknown
+        alertes.append("DICRIM : date de publication inconnue")
     elif date.today().year - annee > settings.dicrim_max_age_years:
         alertes.append(f"DICRIM ancien ({annee})")
     indice = indice_priorite(global_score, r.get("effectif_total"))
