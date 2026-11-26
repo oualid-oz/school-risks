@@ -58,7 +58,7 @@ def test_stats_count_pupils_per_level_and_keep_the_dicrim_count(client):
     assert stats["sans_effectif"] == 0
     profiles = get_store().all_profiles().values()
     assert stats["dicrim_absent_ou_ancien"] == sum(
-        1 for p in profiles if any(a.startswith("DICRIM") for a in p["alertes"])
+        1 for p in profiles if any(a.startswith(("DICRIM absent", "DICRIM ancien")) for a in p["alertes"])
     )
 
 
