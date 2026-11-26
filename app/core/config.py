@@ -25,7 +25,8 @@ class Settings(BaseSettings):
 
     data_dir: Path = BASE_DIR / "data"
     # Departments the data pipeline covers: "45" or "45,17,74" (codes as in INSEE: 2A, 971…).
-    departements: Annotated[list[str], NoDecode] = ["45"]
+    # Published today: the académie of Orléans-Tours.
+    departements: Annotated[list[str], NoDecode] = ["18", "28", "36", "37", "41", "45"]
     colleges_file: str = "colleges.parquet"
     risques_file: str = "colleges_risques.parquet"
     secteurs_file: str = "colleges_secteurs.geojson"

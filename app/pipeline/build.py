@@ -352,7 +352,9 @@ def build(
 
 
 # ---- validation ---------------------------------------------------------------
-def validate(result: BuildResult, previous_risques: pd.DataFrame) -> list[str]:
+def validate(
+    result: BuildResult, previous_risques: pd.DataFrame, removed_departements: tuple[str, ...] = ()
+) -> list[str]:
     """Blocking problems. An empty list means the files can be published."""
     errors = []
     r, h = result.risques, result.history
@@ -363,7 +365,13 @@ def validate(result: BuildResult, previous_risques: pd.DataFrame) -> list[str]:
     before = previous_risques.apply(_department_of, axis=1).value_counts()
     after = r["departement"].value_counts()
     for dep, count in before.items():
-        if dep in after.index and after[dep] < 0.9 * count:
+        if dep not in after.index and dep not in removed_departements:
+            # A published department missing from the build is a configuration mistake
+            # (SRT_DEPARTEMENTS not updated), not a decision: removing one must be explicit.
+            errors.append(f"risques: department {dep} is published but not in this build "
+                          f"({count} schools); add it to --departements / SRT_DEPARTEMENTS, or "
+                          f"withdraw it on purpose with --remove-departements {dep}")
+        elif dep in after.index and after[dep] < 0.9 * count:
             errors.append(f"risques: department {dep} drops from {count} to {after[dep]} schools")
     if not set(h["uai"]) <= set(r["uai"]):
         errors.append("history: schools missing from the risk table")
