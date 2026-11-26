@@ -267,3 +267,17 @@ def test_clay_is_rechecked_for_every_school_once_per_cycle():
     assert set().union(*due) == set(uais)
     assert sum(len(d) for d in due) == len(uais)  # each school exactly once per cycle
     assert all(60 < len(d) < 140 for d in due)  # roughly a sixth each month
+
+
+def test_a_published_department_cannot_disappear_silently():
+    from pathlib import Path
+
+    pilot = Path(__file__).parent / "e2e" / "fixtures" / "pilot"
+    risques = pd.read_parquet(pilot / settings.risques_file)
+    history = pd.read_parquet(pilot / settings.colleges_file)
+    kept = risques[risques.departement != "74"]  # e.g. SRT_DEPARTEMENTS not updated
+    build = BuildResult(kept, history[history.uai.isin(kept.uai)])
+
+    errors = validate(build, risques)
+    assert any("department 74 is published but not in this build (75 schools)" in e for e in errors)
+    assert not any("department" in e for e in validate(build, risques, removed_departements=("74",)))

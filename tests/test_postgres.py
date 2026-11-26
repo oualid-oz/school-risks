@@ -33,9 +33,10 @@ API = "/api/v1"
 
 @pytest.fixture(scope="module")
 def pg_engine():
-    config = alembic_config(URL)
-    command.downgrade(config, "base")
-    command.upgrade(config, "head")
+    from tests.conftest import wipe_database
+
+    wipe_database(URL)
+    command.upgrade(alembic_config(URL), "head")
     engine = make_engine(URL)
     load_reference(engine)
     yield engine

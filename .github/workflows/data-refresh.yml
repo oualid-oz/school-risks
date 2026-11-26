@@ -59,8 +59,9 @@ jobs:
       - name: Rebuild, compare, open or update the pull request
         env:
           PUSH: "1"
-          # Departments to build (repository variable: "45", "45,17,74" or "all"); default Loiret.
-          SRT_DEPARTEMENTS: ${{ vars.SRT_DEPARTEMENTS || '45' }}
+          # Departments to build (repository variable: "45", "45,17,74" or "all"). Default: the
+          # published académie of Orléans-Tours. A published department left out blocks the PR.
+          SRT_DEPARTEMENTS: ${{ vars.SRT_DEPARTEMENTS || '18,28,36,37,41,45' }}
           SRT_PIPELINE_DATABASE_URL: postgresql+psycopg://srt:pipeline-password@127.0.0.1:5432/pipeline
           WORKERS: ${{ github.event.inputs.workers || '8' }}
           KEEP: ${{ github.event.inputs.keep || '' }}

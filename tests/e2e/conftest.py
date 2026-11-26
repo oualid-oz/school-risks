@@ -26,6 +26,7 @@ if not URL:
 playwright_api = pytest.importorskip("playwright.sync_api")
 
 ROOT = Path(__file__).resolve().parents[2]
+LOIRET = ROOT / "tests" / "fixtures" / "loiret"  # frozen test data (not the published files)
 ARTIFACTS = ROOT / "tests" / "e2e" / "artifacts"
 ADMIN = ("e2e-admin", "e2e-admin-password-" + secrets.token_hex(4))
 
@@ -42,18 +43,19 @@ def live_server():
 
     from app.db import alembic_config, make_engine
     from app.services.reference_db import load_reference
+    from tests.conftest import wipe_database
 
-    config = alembic_config(URL)
-    command.downgrade(config, "base")
-    command.upgrade(config, "head")
+    wipe_database(URL)
+    command.upgrade(alembic_config(URL), "head")
     engine = make_engine(URL)
-    load_reference(engine)
+    load_reference(engine, LOIRET)
     engine.dispose()
 
     port = _free_port()
     env = {
         **os.environ,
         "SRT_DATABASE_URL": URL,
+        "SRT_DATA_DIR": str(LOIRET),  # frozen test data, not the published files
         "SRT_JWT_SECRET_KEY": secrets.token_urlsafe(48),
         "SRT_BOOTSTRAP_ADMIN_USERNAME": ADMIN[0],
         "SRT_BOOTSTRAP_ADMIN_PASSWORD": ADMIN[1],

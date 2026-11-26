@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlmodel import Session, SQLModel, create_engine
@@ -13,6 +15,18 @@ from app.main import app
 from app.models.security import User, UserRole
 
 ADMIN_PASSWORD_HASH = hash_password("test-admin-password")
+# The tests run on frozen Loiret data, not on `data/`, which changes with each publication.
+LOIRET = Path(__file__).parent / "fixtures" / "loiret"
+
+
+@pytest.fixture(scope="session", autouse=True)
+def loiret_data():
+    published = settings.data_dir
+    settings.data_dir = LOIRET
+    get_store.cache_clear()
+    yield LOIRET
+    settings.data_dir = published
+    get_store.cache_clear()
 
 
 @pytest.fixture
@@ -50,3 +64,16 @@ def client(monkeypatch):
         yield c
     app.dependency_overrides.clear()
     get_store.cache_clear()
+
+
+def wipe_database(url: str) -> None:
+    """An empty database for the Postgres tests. Dropping the schema works whatever data a
+    previous run left; `alembic downgrade base` fails on data the old schemas cannot hold."""
+    from sqlalchemy import create_engine, text
+
+    engine = create_engine(url)
+    with engine.begin() as conn:
+        conn.execute(text("DROP SCHEMA IF EXISTS public CASCADE"))
+        conn.execute(text("CREATE SCHEMA public"))
+        conn.execute(text("CREATE EXTENSION IF NOT EXISTS postgis"))
+    engine.dispose()

@@ -1,13 +1,16 @@
 # School Risk Tracker (FastAPI)
 
-An API to track natural and technological risks for the **70 collèges in Loiret**.
+An API to track natural and technological risks for the collèges of the **académie of Orléans-Tours**: 288 collèges in Cher, Eure-et-Loir, Indre, Indre-et-Loire, Loir-et-Cher and Loiret. The pipeline can build all of France.
 It also tracks the follow-up actions taken for each school.
+Outside Loiret, the hazardous-materials transport (TMD) and flood-marker data have no public source yet. Those 218 schools are shown with an incomplete evaluation, and their scores are minima.
 
 | Data file | Content |
 |---|---|
-| `data/colleges_risques.parquet` | 1 row per school: clay soils, flood plan (PPRI), cavities, ICPE/Seveso sites, hazardous-materials transport (TMD), nuclear plant, CatNat declarations, DICRIM year |
+| `data/colleges_risques.parquet` | 1 row per school: clay soils, flood plan (PPRI), cavities, ICPE/Seveso sites, TMD, nuclear plant, CatNat declarations, DICRIM year, territorial hazards (earthquake, radon, wildfire, coast, avalanche) |
 | `data/colleges.parquet` | 10 school years (2016 → 2025): enrolment, IPS, DNB results |
-| `data/colleges_secteurs.geojson` | 59 catchment areas (sectors) as polygons |
+| `data/colleges_secteurs.geojson` | 241 catchment areas (sectors): Loiret's from the department, the others from the national school map |
+
+The tests do not use `data/`: they run on frozen Loiret data (`tests/fixtures/loiret`) and a 3-department fixture (`tests/e2e/fixtures/pilot`).
 
 ## Run it
 

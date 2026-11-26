@@ -71,7 +71,7 @@ def cmd_build(args: argparse.Namespace) -> int:
         if bulk_engine is not None:
             bulk_engine.dispose()
 
-    errors = validate(result, previous)
+    errors = validate(result, previous, tuple(parse_departements(args.remove_departements or "")))
     diff = compare(result.risques, previous, result.history, previous_history)
     if result.secteurs is not None:
         from app.pipeline import sectors
@@ -144,7 +144,7 @@ def main(argv: list[str] | None = None) -> int:
     b.add_argument("--workers", type=int, default=4, help="Parallel API requests")
     b.add_argument(
         "--departements", metavar="CODES",
-        help="Departments to build, e.g. 45,17,74, or all (default: SRT_DEPARTEMENTS, else 45)",
+        help="Departments to build, e.g. 45,17,74, or all (default: SRT_DEPARTEMENTS)",
     )
     b.add_argument(
         "--source", choices=["bulk", "api"],
@@ -154,6 +154,10 @@ def main(argv: list[str] | None = None) -> int:
     b.add_argument(
         "--refresh-all", action="store_true",
         help="Bulk mode: re-check clay, earthquake zone and radon everywhere (default: a sixth per month)",
+    )
+    b.add_argument(
+        "--remove-departements", metavar="CODES",
+        help="Published departments to withdraw on purpose (else their absence blocks publishing)",
     )
     b.add_argument(
         "--keep",
