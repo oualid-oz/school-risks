@@ -164,6 +164,21 @@ def cmd_send_digests(args: argparse.Namespace) -> int:
     return 1 if result["failed"] else 0
 
 
+def cmd_purge(_: argparse.Namespace) -> int:
+    """Delete personal data past its retention period. Safe to run as often as you like."""
+    import json
+
+    from sqlmodel import Session
+
+    from app.db import init_db
+    from app.services.retention import purge
+
+    init_db()
+    with Session(engine) as session:
+        print(json.dumps(purge(session)))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m app.manage")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -179,6 +194,9 @@ def main(argv: list[str] | None = None) -> int:
     c.set_defaults(func=cmd_copy_sqlite)
     deploy = sub.add_parser("deploy-check", help="Migrate and verify the database (Vercel build step)")
     deploy.set_defaults(func=cmd_deploy_check)
+    sub.add_parser("purge", help="Delete personal data past its retention period").set_defaults(
+        func=cmd_purge
+    )
     digest = sub.add_parser("send-digests", help="Send this week's email digests (idempotent)")
     digest.add_argument("--force", action="store_true", help="Send even before the configured weekday/hour")
     digest.add_argument("--dry-run", action="store_true", help="Build the digests, log them, send nothing")

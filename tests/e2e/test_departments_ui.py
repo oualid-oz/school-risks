@@ -117,3 +117,35 @@ def test_department_admin_sees_and_administers_their_department_only(pilot_page)
     options = page.locator("#user-form select[name=perimetre] option")
     expect(options).to_have_count(1)  # no "France entière", no other department
     expect(options.first).to_have_text("Haute-Savoie (74)")
+
+
+def test_data_error_report_reaches_the_quality_page(pilot_page):
+    from tests.e2e.test_ui import _axe
+
+    page = pilot_page
+    page.goto("/#school/0740001Z")
+    page.get_by_role("button", name="Signaler une erreur de données").click()
+    dialog = page.locator("#report-dialog")
+    dialog.locator("select[name=champ]").select_option("position")
+    dialog.locator("textarea[name=message]").fill("Le collège est au bourg, pas au hameau.")
+    dialog.get_by_role("button", name="Envoyer").click()
+    expect(dialog.locator(".form-message")).to_contain_text("transmis")
+    dialog.locator(".alerts-buttons").get_by_role("button", name="Fermer").click()
+
+    page.goto("/#qualite")
+    expect(page.locator("#quality-page h1")).to_have_text("Qualité des données")
+    table = page.locator(".quality-table")
+    expect(table.locator("tbody tr")).to_have_count(3)
+    expect(table.locator("tbody tr", has_text="Charente-Maritime")).to_contain_text("aucune source")
+    card = page.locator(".report-card", has_text="hameau")
+    expect(card).to_contain_text("Position du collège")
+    assert not _axe(page), _axe(page)
+
+    card.locator("textarea").fill("Position corrigée dans l’annuaire.")
+    card.get_by_role("button", name="Marquer traité").click()
+    expect(page.locator("#quality-reports")).to_contain_text("Aucun signalement ouvert")
+
+    page.goto("/accessibilite.html")
+    expect(page.locator("h1")).to_have_text("Déclaration d’accessibilité")
+    expect(page.locator("main")).to_contain_text("Non conforme")
+    assert not _axe(page), _axe(page)

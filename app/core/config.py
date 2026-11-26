@@ -50,6 +50,10 @@ class Settings(BaseSettings):
     # Threads for synchronous endpoints per process (FastAPI's default: 40). See main.py.
     worker_threads: int = 16
 
+    # Retention of personal data, in months (GDPR; see app/services/retention.py).
+    audit_retention_months: int = Field(default=12, ge=1)
+    notification_retention_months: int = Field(default=6, ge=1)
+
     # Authentication and browser access.
     jwt_secret_key: str = ""
     access_token_expire_minutes: int = 30
