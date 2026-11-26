@@ -46,6 +46,35 @@ def overview(
 territories_router = APIRouter(tags=["stats"], dependencies=[Depends(get_current_user)])
 
 
+@territories_router.get("/qualite", response_model=dict[str, Any])
+@limiter.limit(settings.rate_limit_default)
+def data_quality(
+    request: Request,
+    departement: str | None = None,
+    store: DataStore = Depends(get_store),
+    session: Session = Depends(get_session),
+    scope: Scope = Depends(get_scope),
+):
+    """Data quality of the user's area: per department, the coverage of each source, where
+    the sectors come from and the open data reports; then the schools missing data (of
+    `departement`, or of the whole area)."""
+    from app.models.feedback import DataReport, StatutSignalement
+    from app.services import quality
+
+    scope.check_departement(departement)
+    stmt = select(DataReport.departement, func.count()).where(
+        DataReport.statut == StatutSignalement.ouvert
+    ).group_by(DataReport.departement)
+    if not scope.national:
+        stmt = stmt.where(DataReport.departement.in_(scope.departements))
+    open_reports = dict(session.exec(stmt).all())
+    session.close()
+    return {
+        "departements": quality.by_department(store, scope.departements, open_reports),
+        "colleges_incomplets": quality.schools_with_gaps(store, scope.departements, departement),
+    }
+
+
 @territories_router.get("/territoires", response_model=list[dict[str, Any]])
 @limiter.limit(settings.rate_limit_default)
 def territories(

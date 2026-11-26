@@ -21,6 +21,7 @@ from app.api.routes import (
     ppms,
     scores,
     secteurs,
+    signalements,
     stats,
 )
 from app.core.config import settings
@@ -86,7 +87,7 @@ if settings.trusted_proxies:
 
 for r in (
     auth.router, colleges.router, ppms.router, secteurs.router, actions.router, stats.router,
-    exports.router, internal.router, scores.router, stats.territories_router,
+    exports.router, internal.router, scores.router, stats.territories_router, signalements.router,
 ):
     app.include_router(r, prefix=settings.api_prefix)
 app.include_router(health.router)

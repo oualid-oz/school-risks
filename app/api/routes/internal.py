@@ -29,8 +29,11 @@ def run_digest(
     store: DataStore = Depends(get_store),
     session: Session = Depends(get_session),
 ):
-    """Send this week's email digests (from the configured weekday and hour on).
+    """Send this week's email digests (from the configured weekday and hour on), then delete
+    personal data past its retention period (the only daily job on Vercel).
 
     Safe to call daily or hourly: each person gets at most one digest per week.
     """
-    return send_digests(session, store)
+    from app.services.retention import purge
+
+    return {**send_digests(session, store), "purge": purge(session)}

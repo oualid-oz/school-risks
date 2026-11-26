@@ -31,6 +31,7 @@ engine = make_engine(settings.database_url)
 
 def register_models() -> None:
     from app.models import (  # noqa: F401  (registers the tables)
+        feedback,
         notifications,
         ppms,
         security,

@@ -182,6 +182,21 @@ The area is set on the admin page ("Périmètre"), or with `departements` in `PO
 - **Audit log:** an area admin sees the events about their schools (each event records its school's department), and those by or about the accounts they manage.
 - **Existing accounts:** at the upgrade (migration 0010), they have no area, so they keep national rights.
 
+### Personal data (GDPR)
+
+`python -m app.manage purge` deletes what is past its retention period: the audit log after `SRT_AUDIT_RETENTION_MONTHS` (12) and the email log after `SRT_NOTIFICATION_RETENTION_MONTHS` (6). The Docker scheduler runs it every hour and the Vercel cron every day.
+- `deploy/rgpd.md` (in French, for the data controller and the DPO) lists the data, the retention periods, the processors and the decisions still to take.
+- The public pages are linked in every page's footer: `frontend/donnees-personnelles.html`, `mentions-legales.html` and `accessibilite.html`. Their bracketed parts are to be filled in before opening the service. The accessibility statement says "non conforme" until an RGAA audit is done.
+
+### Opening a territory
+
+`GUIDE_ACADEMIES.md` (in French) is the guide for academies and departments. It covers what to check first, roles, the first week and the feedback loop.
+- The **Qualité des données** page (`#qualite`, administrators; `GET /qualite`) shows, per department of the user's area:
+  - the coverage of each source (enrolment, IPS, clay map, TMD, flood markers, earthquake zone, radon, sector);
+  - where the sectors come from and the open data reports;
+  - the schools missing data.
+- **Data error reports:** anyone who sees a school can report one from its page (`POST /colleges/{uai}/signalements`). Administrators of its area close them with an answer the reporter sees (`GET /signalements`, `PATCH /signalements/{id}`). Corrections then go through the sources: the data is rebuilt from them every month.
+
 ## Refreshing the data
 
 **Departments.** The pipeline builds the collèges of the departments in `SRT_DEPARTEMENTS` (default `45`), or `--departements 45,17,74`. The schools come from the education directory: open collèges, public or private under contract. Schools already published keep their name, position and sector. Each school carries its department and académie, and the interface has a department selector when there are several. `--departements all` builds mainland France and Corsica (bulk mode only, see below). For the monthly refresh, set the repository variable `SRT_DEPARTEMENTS`.

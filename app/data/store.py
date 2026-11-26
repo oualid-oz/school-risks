@@ -155,6 +155,10 @@ class DataStore:
     def get_profile(self, uai: str) -> dict[str, Any] | None:
         return self._profiles.get(uai)
 
+    def rows(self, area: frozenset[str] | None = None) -> list[dict[str, Any]]:
+        """Reference rows of the schools (of an area), read-only."""
+        return [r for r in self._risk_rows.values() if area is None or r.get("departement") in area]
+
     def uais(self) -> list[str]:
         return sorted(self._risk_rows)
 

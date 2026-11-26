@@ -29,6 +29,7 @@
         <div id="account-menu" class="account-menu">
           <span id="account-name"></span>
           <a id="simulation-link" class="nav-link" href="#simulation">Simulation</a>
+          <a id="quality-link" class="nav-link" href="#qualite" hidden>Qualité des données</a>
           <a id="admin-link" class="nav-link" href="#admin" hidden>Utilisateurs</a>
           <button id="account-button" type="button">Mon compte</button>
           <button id="logout-button" type="button">Déconnexion</button>
@@ -99,6 +100,23 @@
         <div class="alerts-buttons"><button type="submit" class="primary">Commenter</button></div>
       </form>
       <ol id="history-list" class="history-list" aria-live="polite"></ol>
+    </dialog>
+
+    <dialog id="report-dialog" class="app-dialog" aria-labelledby="report-title">
+      <form id="report-form">
+        <div class="dialog-head">
+          <h2 id="report-title">Signaler une erreur de données</h2>
+          <button type="button" class="dialog-close" data-close aria-label="Fermer">×</button>
+        </div>
+        <p class="panel-caption">Les administrateurs de ce territoire vérifient le signalement et vous répondent ici (« Qualité des données » ou cette fiche). Les corrections passent par les sources officielles des données.</p>
+        <label class="ppms-field"><span>Donnée concernée</span><select name="champ"></select></label>
+        <label class="ppms-field"><span>Ce qui est faux, et si possible la bonne valeur</span><textarea name="message" required minlength="5" maxlength="2000" rows="4"></textarea></label>
+        <p class="form-message" role="alert" hidden></p>
+        <div class="alerts-buttons">
+          <button type="button" data-close>Fermer</button>
+          <button type="submit" class="primary">Envoyer</button>
+        </div>
+      </form>
     </dialog>
 
     <dialog id="user-dialog" class="app-dialog wide" aria-labelledby="user-title">
@@ -227,6 +245,20 @@
         <p class="disclaimer">Les scores sont des indicateurs de priorisation et ne constituent pas une classification officielle.</p>
       </section>
 
+      <section id="quality-page" class="view" hidden>
+        <div class="page-heading">
+          <div>
+            <p class="eyebrow">AVANT D’OUVRIR UN TERRITOIRE</p>
+            <h1>Qualité des données</h1>
+            <p class="subheading">Ce que chaque source couvre, département par département, les collèges auxquels il manque des données, l’origine des secteurs et les signalements à traiter.</p>
+          </div>
+        </div>
+        <div id="quality-error" class="error-banner" role="alert" hidden></div>
+        <section class="panel detail-panel"><h2>Couverture des sources</h2><div id="quality-table"></div></section>
+        <section class="panel detail-panel"><h2>Signalements ouverts</h2><div id="quality-reports"></div></section>
+        <section class="panel detail-panel"><h2>Collèges incomplets</h2><div id="quality-schools"></div></section>
+      </section>
+
       <section id="simulation-page" class="view" hidden>
         <div class="page-heading">
           <div>
@@ -272,7 +304,15 @@
       </section>
     </main>
 
-    <footer><span>School Risk Tracker</span><span>Sources : données de référence du projet · Fond cartographique © OpenStreetMap</span></footer>
+    <footer>
+      <span>School Risk Tracker</span>
+      <span>Sources : données de référence du projet · Fond cartographique © OpenStreetMap</span>
+      <nav aria-label="Informations légales" class="legal-links">
+        <a href="/mentions-legales.html">Mentions légales</a>
+        <a href="/donnees-personnelles.html">Données personnelles</a>
+        <a href="/accessibilite.html">Accessibilité : non conforme</a>
+      </nav>
+    </footer>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
@@ -282,5 +322,6 @@
     <script src="/admin.js" defer></script>
     <script src="/spatial.js" defer></script>
     <script src="/simulation.js" defer></script>
+    <script src="/quality.js" defer></script>
   </body>
 </html>

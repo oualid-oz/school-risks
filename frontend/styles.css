@@ -343,3 +343,25 @@ footer { min-height: 56px; padding: 14px max(28px, calc((100% - 1440px) / 2)); b
   .school-score-card span { margin-left: auto; }
   footer { padding: 13px 16px; flex-direction: column; }
 }
+
+/* Data quality page and data error reports (Sprint 22) */
+.table-scroll { overflow-x: auto; }
+.quality-table { border-collapse: collapse; width: 100%; font-size: 11px; }
+.quality-table caption { text-align: left; color: #59665e; padding-bottom: 8px; }
+.quality-table th, .quality-table td { padding: 6px 8px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+.quality-table .num { text-align: right; white-space: nowrap; }
+.coverage.good { color: #1d6b48; }
+.coverage.partial { color: #8a5a12; background: #fff8eb; }
+.coverage.poor { color: #9b2f25; background: #fdeeec; font-weight: 600; }
+.report-card { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin-bottom: 10px; }
+.report-card h3 { font-size: 13px; margin: 0 0 4px; }
+.report-card p { margin: 4px 0; }
+.report-close textarea, #report-form textarea { width: 100%; font: inherit; }
+.gap-list { margin: 6px 0 0; padding-left: 18px; font-size: 12px; }
+.gap-list li { margin-bottom: 3px; }
+.legal-links { display: flex; gap: 12px; flex-wrap: wrap; }
+.legal-links a { color: #4b5a51; }
+.legal { max-width: 760px; margin: 0 auto; padding: 32px 20px 48px; line-height: 1.55; font-size: 14px; }
+.legal h1 { font-size: 26px; margin: 12px 0 16px; }
+.legal h2 { font-size: 17px; margin: 26px 0 8px; }
+.legal .todo { padding: 8px 12px; border-radius: 7px; background: #fff8eb; color: #7a4f17; }

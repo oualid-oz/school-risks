@@ -161,7 +161,7 @@ function showError(id, message) {
   banner.hidden = false;
 }
 
-const VIEWS = ["login-screen", "dashboard", "school-page", "admin-page", "simulation-page"];
+const VIEWS = ["login-screen", "dashboard", "school-page", "admin-page", "simulation-page", "quality-page"];
 
 function showView(id) {
   VIEWS.forEach((view) => { document.getElementById(view).hidden = view !== id; });
@@ -382,6 +382,7 @@ function showLogin(message = "") {
 function showAccount(user) {
   currentUser = user;
   document.getElementById("admin-link").hidden = user.role !== "admin";
+  document.getElementById("quality-link").hidden = user.role !== "admin";
   document.getElementById("login-screen").hidden = true;
   document.getElementById("account-controls").hidden = false;
   document.getElementById("account-name").textContent = `${user.username} · ${user.role}`;
@@ -753,7 +754,8 @@ function renderSchool(school, actions, history, ppms) {
   const exportsBar = element("div", "export-bar");
   exportsBar.append(
     exportButton("Fiche PDF", `/colleges/${uaiParam}/fiche.pdf`, "Fiche risques à imprimer ou à joindre"),
-    exportButton("Actions (CSV)", `/exports/actions.csv?uai=${uaiParam}`, "Actions de suivi, pour Excel")
+    exportButton("Actions (CSV)", `/exports/actions.csv?uai=${uaiParam}`, "Actions de suivi, pour Excel"),
+    reportButton(school.uai) // quality.js
   );
   heading.append(exportsBar);
   const score = element("div", `school-score-card ${riskClass(profile.score_global)}`);
@@ -1037,6 +1039,7 @@ function route() {
   if (match) showSchoolPage(decodeURIComponent(match[1]));
   else if (location.hash === "#admin" && currentUser.role === "admin") showAdminPage();
   else if (location.hash === "#simulation") showSimulationPage(); // simulation.js
+  else if (location.hash === "#qualite" && currentUser.role === "admin") showQualityPage(); // quality.js
   else {
     currentCharts.forEach((chart) => chart.destroy());
     currentCharts = [];
@@ -1055,6 +1058,7 @@ async function init() {
   setupSpatial(); // spatial.js
   setupAccountMenu();
   setupSimulation(); // simulation.js
+  setupQuality(); // quality.js
   // Skip link: move the focus without touching the URL hash (the hash is the router).
   document.querySelector(".skip-link").addEventListener("click", (event) => {
     event.preventDefault();
